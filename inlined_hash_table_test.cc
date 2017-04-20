@@ -10,13 +10,27 @@
 
 #include "inlined_hash_table.h"
 
-using Map = InlinedHashMap<std::string, std::string, 8>;
-using Set = InlinedHashSet<std::string, 8>;
+class StrTableOptions {
+ public:
+  const std::string& EmptyKey() const { return empty_key_; };
+  const std::string& DeletedKey() const { return deleted_key_; }
+
+ private:
+  std::string empty_key_;
+  std::string deleted_key_ = "xxx";
+};
+
+class IntTableOptions {
+ public:
+  int EmptyKey() const { return -1; }
+  int DeletedKey() const { return -2; }
+};
+
+using Map = InlinedHashMap<std::string, std::string, 8, StrTableOptions>;
+using Set = InlinedHashSet<std::string, 8, StrTableOptions>;
 
 TEST(InlinedHashMap, Simple) {
   Map t;
-  t.set_empty_key("");
-  t.set_deleted_key("xxx");
   EXPECT_TRUE(t.empty());
   EXPECT_TRUE(t.insert(std::make_pair("hello", "world")).second);
   EXPECT_FALSE(t.empty());
@@ -33,11 +47,16 @@ TEST(InlinedHashMap, Simple) {
   EXPECT_TRUE(t.find("hello") == t.end());
 }
 
+TEST(InlinedHashMap, EmptyInlinedArray) {
+  InlinedHashSet<int, 0, IntTableOptions> s;
+  ASSERT_TRUE(s.insert(10).second);
+  ASSERT_TRUE(s.insert(11).second);
+  ASSERT_FALSE(s.insert(10).second);
+}
+
 TEST(InlinedHashSet, Random) {
-  InlinedHashSet<int, 8> t;
+  InlinedHashSet<int, 8, IntTableOptions> t;
   std::unordered_set<int> oracle;
-  t.set_empty_key(-1);
-  t.set_deleted_key(-2);
 
   std::mt19937 rand(0);
   for (int i = 0; i < 1000; ++i) {
@@ -59,7 +78,6 @@ TEST(InlinedHashSet, Random) {
 
 TEST(InlinedHashSet, Simple) {
   Set t;
-  t.set_empty_key("");
   EXPECT_TRUE(t.empty());
   EXPECT_TRUE(t.insert("hello").second);
   EXPECT_FALSE(t.empty());
@@ -107,10 +125,14 @@ TEST(Benchmark, UnorderedMapInsert) {
 }
 
 TEST(Benchmark, InlinedMapInsert) {
+  class IntTableOptions {
+   public:
+    unsigned EmptyKey() const { return -1; }
+    unsigned DeletedKey() const { return -2; }
+  };
   std::vector<unsigned> values = TestValues();
   auto start = std::chrono::system_clock::now();
-  InlinedHashMap<unsigned, unsigned, 8> map;
-  map.set_empty_key(-1);
+  InlinedHashMap<unsigned, unsigned, 8, IntTableOptions> map;
   for (unsigned v : values) {
     map[v] = v + 1;
   }

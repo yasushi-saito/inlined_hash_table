@@ -68,13 +68,23 @@ TEST(Benchmark, UnorderedMapInsert) {
     ASSERT_EQ(map[values[i]], values[i] + 1);
   }
   std::chrono::duration<double> elapsed = end - start;
-  std::cout << "Elapsed: " << elapsed.count() << "\n";
+  std::cout << "Insert elapsed: " << elapsed.count() << "\n";
+
+  std::mt19937 rand(0);
+  std::shuffle(values.begin(), values.end(), rand);
+  start = std::chrono::system_clock::now();
+  for (unsigned v : values) {
+    ASSERT_EQ(map[v], v + 1);
+  }
+  end = std::chrono::system_clock::now();
+  elapsed = end - start;
+  std::cout << "Lookup elapsed: " << elapsed.count() << "\n";
 }
 
 TEST(Benchmark, InlinedMapInsert) {
   std::vector<unsigned> values = TestValues();
   auto start = std::chrono::system_clock::now();
-  InlinedHashMap<unsigned, unsigned, 16384> map;
+  InlinedHashMap<unsigned, unsigned, 8> map;
   map.set_empty_key(-1);
   for (unsigned v : values) {
     map[v] = v + 1;
@@ -85,6 +95,16 @@ TEST(Benchmark, InlinedMapInsert) {
   }
   std::chrono::duration<double> elapsed = end - start;
   std::cout << "Elapsed: " << elapsed.count() << "\n";
+
+  std::mt19937 rand(0);
+  std::shuffle(values.begin(), values.end(), rand);
+  start = std::chrono::system_clock::now();
+  for (unsigned v : values) {
+    ASSERT_EQ(map[v], v + 1);
+  }
+  end = std::chrono::system_clock::now();
+  elapsed = end - start;
+  std::cout << "Lookup elapsed: " << elapsed.count() << "\n";
 }
 
 int main(int argc, char** argv) {

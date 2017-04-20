@@ -20,6 +20,15 @@ class StrTableOptions {
   std::string deleted_key_ = "xxx";
 };
 
+class StrTableOptionsWithoutDeletion {
+ public:
+  const std::string& EmptyKey() const { return empty_key_; };
+
+ private:
+  std::string empty_key_;
+  std::string deleted_key_ = "xxx";
+};
+
 class IntTableOptions {
  public:
   int EmptyKey() const { return -1; }
@@ -45,6 +54,15 @@ TEST(InlinedHashMap, Simple) {
   t.erase("hello");
   EXPECT_TRUE(t.empty());
   EXPECT_TRUE(t.find("hello") == t.end());
+}
+
+TEST(InlinedHashMap, NoDeletion) {
+  InlinedHashMap<std::string, std::string, 8, StrTableOptionsWithoutDeletion> t;
+
+  EXPECT_TRUE(t.empty());
+  EXPECT_TRUE(t.insert(std::make_pair("hello", "world")).second);
+  EXPECT_TRUE(t.erase("hello"));
+  EXPECT_FALSE(t.empty());
 }
 
 TEST(InlinedHashMap, EmptyInlinedArray) {

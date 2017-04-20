@@ -6,6 +6,7 @@
 #include <cassert>
 #include <functional>
 #include <memory>
+#include <type_traits>
 
 // TODO: const iterators
 // TODO: size reservation
@@ -25,7 +26,7 @@
 //   const Key& DeletedKey() const;
 //
 // EmptyKey() should return a key that represents an unused key.  DeletedKey()
-// should return a tombstore key. DeletedKey() needs to be defined iff you use
+// should return a tombstone key. DeletedKey() needs to be defined iff you use
 // erase().
 template <typename Key, typename Elem, int NumInlinedElements, typename Options,
           typename GetKey, typename Hash, typename EqualTo, typename IndexType>
@@ -293,8 +294,19 @@ class InlinedHashTable {
   bool IsEmptyKey(const Key& k) const {
     return KeysEqual(options_.EmptyKey(), k);
   }
+
+  template <typename TOptions, typename TEqualTo>
+  static auto SfinaeIsDeletedKey(const Key* k, const TOptions* options,
+                                 const TEqualTo* equal_to)
+      -> decltype(KeysEqual(options->DeletedKey(), *k)) {
+    return equal_to(options->DeletedKey(), *k);
+  }
+
+  static auto SfinaeIsDeletedKey(...) -> bool { return false; }
+
   bool IsDeletedKey(const Key& k) const {
-    return KeysEqual(options_.DeletedKey(), k);
+    // return KeysEqual(options_.DeletedKey(), k);
+    return SfinaeIsDeletedKey(&k, &options_, &equal_to_);
   }
 
   Options options_;

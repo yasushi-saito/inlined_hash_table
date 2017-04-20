@@ -1,6 +1,11 @@
 
 #include <gtest/gtest.h>
+
+#include <chrono>
+#include <iostream>
+#include <random>
 #include <string>
+#include <unordered_map>
 
 #include "inlined_hash_table.h"
 
@@ -38,6 +43,48 @@ TEST(InlinedHashSet, Simple) {
   EXPECT_EQ("hello", *it);
   ++it;
   EXPECT_TRUE(it == t.end());
+}
+
+const int kBenchmarkIters = 10000;
+
+std::vector<unsigned> TestValues() {
+  std::mt19937 rand(0);
+  std::vector<unsigned> values;
+  for (int i = 0; i < kBenchmarkIters; ++i) {
+    values.push_back(rand());
+  }
+  return values;
+}
+
+TEST(Benchmark, UnorderedMapInsert) {
+  std::vector<unsigned> values = TestValues();
+  auto start = std::chrono::system_clock::now();
+  std::unordered_map<unsigned, unsigned> map;
+  for (unsigned v : values) {
+    map[v] = v + 1;
+  }
+  auto end = std::chrono::system_clock::now();
+  for (int i = 0; i < kBenchmarkIters; ++i) {
+    ASSERT_EQ(map[values[i]], values[i] + 1);
+  }
+  std::chrono::duration<double> elapsed = end - start;
+  std::cout << "Elapsed: " << elapsed.count() << "\n";
+}
+
+TEST(Benchmark, InlinedMapInsert) {
+  std::vector<unsigned> values = TestValues();
+  auto start = std::chrono::system_clock::now();
+  InlinedHashMap<unsigned, unsigned, 16384> map;
+  map.set_empty_key(-1);
+  for (unsigned v : values) {
+    map[v] = v + 1;
+  }
+  auto end = std::chrono::system_clock::now();
+  for (int i = 0; i < kBenchmarkIters; ++i) {
+    ASSERT_EQ(map[values[i]], values[i] + 1);
+  }
+  std::chrono::duration<double> elapsed = end - start;
+  std::cout << "Elapsed: " << elapsed.count() << "\n";
 }
 
 int main(int argc, char** argv) {

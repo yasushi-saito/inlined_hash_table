@@ -7,6 +7,13 @@
 #include <functional>
 #include <memory>
 
+// TODO: const iterators
+// TODO: size reservation
+// TODO: move constructors
+// TODO: Allow overriding the size type (size_t) to compress the table overhead.
+
+// InlinedHashTable is an implementation detail that underlies InlinedHashMap
+// and InlinedHashSet. It's not for public use.
 template <typename Key, typename Elem, int NumInlinedElements, typename GetKey,
           typename Hash, typename EqualTo>
 class InlinedHashTable {

@@ -8,11 +8,8 @@
 #include <memory>
 #include <type_traits>
 
-// TODO: const iterators
 // TODO: size reservation
-// TODO: move constructors
 // TODO: allow passing Hash, EqualTo, Options through the constructor.
-// TODO: Allow overriding the size type (size_t) to compress the table overhead.
 // TODO: Do empty base optimization when NumInlinedElements==0.
 
 // InlinedHashTable is an implementation detail that underlies InlinedHashMap
@@ -39,12 +36,35 @@ class InlinedHashTable {
     InitArray(options_.EmptyKey(), &array_);
   }
 
+  InlinedHashTable(const InlinedHashTable& other) : array_(NumInlinedElements) {
+    *this = other;
+  }
+  InlinedHashTable(InlinedHashTable&& other) : array_(NumInlinedElements) {
+    *this = std::move(other);
+  }
+
+  InlinedHashTable& operator=(const InlinedHashTable& other) {
+    array_ = other.array_;
+    options_ = other.options_;
+    get_key_ = other.get_key_;
+    hash_ = other.hash_;
+    equal_to_ = other.equal_to_;
+    return *this;
+  }
+  InlinedHashTable& operator=(InlinedHashTable&& other) {
+    array_ = std::move(other.array_);
+    options_ = std::move(other.options_);
+    get_key_ = std::move(other.get_key_);
+    hash_ = std::move(other.hash_);
+    equal_to_ = std::move(other.equal_to_);
+    return *this;
+  }
+
   class iterator {
    public:
     using Table = InlinedHashTable<Key, Elem, NumInlinedElements, Options,
                                    GetKey, Hash, EqualTo, IndexType>;
     iterator(Table* table, IndexType index) : table_(table), index_(index) {}
-
     bool operator==(const iterator& other) const {
       return index_ == other.index_;
     }
@@ -53,6 +73,7 @@ class InlinedHashTable {
     }
 
     Elem& operator*() const { return *table_->Mutable(index_); }
+    Elem* operator->() const { return table_->Mutable(index_); }
 
     // TODO(saito) support both pre and post increment ops.
     iterator operator++() {
@@ -66,6 +87,34 @@ class InlinedHashTable {
     IndexType index_;
   };
 
+  class const_iterator {
+   public:
+    using Table = InlinedHashTable<Key, Elem, NumInlinedElements, Options,
+                                   GetKey, Hash, EqualTo, IndexType>;
+    const_iterator(const Table* table, IndexType index)
+        : table_(table), index_(index) {}
+    bool operator==(const const_iterator& other) const {
+      return index_ == other.index_;
+    }
+    bool operator!=(const const_iterator& other) const {
+      return index_ != other.index_;
+    }
+
+    const Elem& operator*() const { return table_->Get(index_); }
+    const Elem* operator->() const { return &table_->Get(index_); }
+
+    // TODO(saito) support both pre and post increment ops.
+    const_iterator operator++() {
+      index_ = table_->NextValidElementInArray(table_->array_, index_ + 1);
+      return *this;
+    }
+
+   private:
+    friend Table;
+    const Table* table_;
+    IndexType index_;
+  };
+
   // TODO(saito) Support const_iterator, cbegin, etc.
 
   iterator begin() {
@@ -74,6 +123,14 @@ class InlinedHashTable {
 
   iterator end() { return iterator(this, kEnd); }
 
+  const_iterator cbegin() const {
+    return const_iterator(this, NextValidElementInArray(array_, 0));
+  }
+  const_iterator cend() const { return const_iterator(this, kEnd); }
+
+  const_iterator begin() const { return cbegin(); }
+  const_iterator end() const { return cend(); }
+
   iterator find(const Key& k) {
     IndexType index;
     if (FindInArray(array_, k, &index)) {
@@ -81,6 +138,28 @@ class InlinedHashTable {
     } else {
       return end();
     }
+  }
+
+  const_iterator find(const Key& k) const {
+    IndexType index;
+    if (FindInArray(array_, k, &index)) {
+      return const_iterator(this, index);
+    } else {
+      return cend();
+    }
+  }
+
+  void clear() {
+    for (Elem& elem : array_.inlined) {
+      *ExtractMutableKey(&elem) = options_.EmptyKey();
+    }
+    if (array_.outlined != nullptr) {
+      for (size_t i = 0; i < array_.capacity - array_.inlined.size(); ++i) {
+        *ExtractMutableKey(&array_.outlined[i]) = options_.EmptyKey();
+      }
+    }
+    array_.size = 0;
+    array_.num_empty_slots = array_.num_empty_slots;
   }
 
   // Erases the element pointed to by "i". Returns the iterator to the next
@@ -126,6 +205,7 @@ class InlinedHashTable {
 
   // Backdoor methods used by map operator[].
   Elem* Mutable(IndexType index) { return MutableArraySlot(&array_, index); }
+  const Elem& Get(IndexType index) const { return ArraySlot(array_, index); }
   enum InsertResult { KEY_FOUND, EMPTY_SLOT_FOUND, ARRAY_FULL };
   InsertResult Insert(const Key& key, IndexType* index) {
     InsertResult result = InsertInArray(&array_, key, index);
@@ -150,6 +230,37 @@ class InlinedHashTable {
         outlined.reset(new Elem[capacity - inlined.size()]);
       }
     }
+
+    Array(const Array& other) {
+      *this = other;
+    }
+
+    Array(Array&& other) {
+      *this = std::move(other);
+    }
+
+    Array& operator=(const Array& other) {
+      size = other.size;
+      capacity = other.capacity;
+      num_empty_slots = other.num_empty_slots;
+      inlined = other.inlined;
+      if (other.outlined != nullptr) {
+        const size_t n = other.capacity - inlined.size();
+        outlined.reset(new Elem[n]);
+        std::copy(&other.outlined[0], &other.outlined[n], &outlined[0]);
+      }
+      return *this;
+    }
+
+    Array& operator=(Array&& other) {
+      size = other.size;
+      capacity = other.capacity;
+      num_empty_slots = other.num_empty_slots;
+      inlined = std::move(other.inlined);
+      outlined = std::move(other.outlined);
+      return *this;
+    }
+
     // First NumInlinedElements are stored in inlined. The rest are stored in
     // outlined.
     std::array<Elem, NumInlinedElements> inlined;
@@ -298,7 +409,7 @@ class InlinedHashTable {
   template <typename TOptions, typename TEqualTo>
   static auto SfinaeIsDeletedKey(const Key* k, const TOptions* options,
                                  const TEqualTo* equal_to)
-      -> decltype(KeysEqual(options->DeletedKey(), *k)) {
+      -> decltype(equal_to(options->DeletedKey(), *k)) {
     return equal_to(options->DeletedKey(), *k);
   }
 
@@ -309,11 +420,11 @@ class InlinedHashTable {
     return SfinaeIsDeletedKey(&k, &options_, &equal_to_);
   }
 
+  Array array_;
   Options options_;
   GetKey get_key_;
   Hash hash_;
   EqualTo equal_to_;
-  Array array_;
 };
 
 template <typename Key, typename Value, int NumInlinedElements,
@@ -322,6 +433,7 @@ template <typename Key, typename Value, int NumInlinedElements,
 class InlinedHashMap {
  public:
   using Elem = std::pair<Key, Value>;
+  using value_type = Elem;
   struct GetKey {
     const Key& Get(const Elem& elem) const { return elem.first; }
     Key* Mutable(Elem* elem) const { return &elem->first; }
@@ -329,17 +441,25 @@ class InlinedHashMap {
   using Table = InlinedHashTable<Key, Elem, NumInlinedElements, Options, GetKey,
                                  Hash, EqualTo, IndexType>;
   using iterator = typename Table::iterator;
+  using const_iterator = typename Table::const_iterator;
 
   bool empty() const { return impl_.empty(); }
   iterator begin() { return impl_.begin(); }
   iterator end() { return impl_.end(); }
+  const_iterator cbegin() const { return impl_.cbegin(); }
+  const_iterator cend() const { return impl_.cend(); }
+  const_iterator begin() const { return impl_.cbegin(); }
+  const_iterator end() const { return impl_.cend(); }
   IndexType size() const { return impl_.size(); }
-  iterator erase(iterator i) { return impl_.erase(i); }
-  IndexType erase(const Key& k) { return impl_.erase(k); }
+  iterator find(const Key& k) { return impl_.find(k); }
+  const_iterator find(const Key& k) const { return impl_.find(k); }
+
   std::pair<iterator, bool> insert(Elem&& value) {
     return impl_.insert(std::move(value));
   }
-  iterator find(const Key& k) { return impl_.find(k); }
+  iterator erase(iterator i) { return impl_.erase(i); }
+  IndexType erase(const Key& k) { return impl_.erase(k); }
+  void clear() { impl_.clear(); }
   Value& operator[](const Key& k) {
     IndexType index;
     typename Table::InsertResult result = impl_.Insert(k, &index);
@@ -367,10 +487,15 @@ class InlinedHashSet {
   using Table = InlinedHashTable<Elem, Elem, NumInlinedElements, Options,
                                  GetKey, Hash, EqualTo, IndexType>;
   using iterator = typename Table::iterator;
+  using const_iterator = typename Table::const_iterator;
 
   bool empty() const { return impl_.empty(); }
   iterator begin() { return impl_.begin(); }
   iterator end() { return impl_.end(); }
+  const_iterator cbegin() const { return impl_.cbegin(); }
+  const_iterator cend() const { return impl_.cend(); }
+  const_iterator begin() const { return impl_.cbegin(); }
+  const_iterator end() const { return impl_.cend(); }
   IndexType size() const { return impl_.size(); }
   std::pair<iterator, bool> insert(Elem&& value) {
     return impl_.insert(std::move(value));
@@ -380,6 +505,8 @@ class InlinedHashSet {
   }
 
   iterator find(const Elem& k) { return impl_.find(k); }
+  const_iterator find(const Elem& k) const { return impl_.find(k); }
+  void clear() { impl_.clear(); }
   iterator erase(iterator i) { return impl_.erase(i); }
   IndexType erase(const Elem& k) { return impl_.erase(k); }
 

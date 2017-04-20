@@ -17,14 +17,23 @@
 //
 // NumInlinedElements is the number of elements stored in-line with the table.
 //
-// Options is a class that defines two methods:
+// Options is a class that defines one required method, and two optional
+// methods.
 //
 //   const Key& EmptyKey() const;
 //   const Key& DeletedKey() const;
+//   double MaxLoadFactor() const;
 //
 // EmptyKey() should return a key that represents an unused key.  DeletedKey()
 // should return a tombstone key. DeletedKey() needs to be defined iff you use
-// erase().
+// erase(). MaxLoadFactor() defines when the hash table is expanded. The default
+// value is 0.75, meaning that if the number of non-empty slots in the table
+// exceeds 75% of the capacity, the hash table is doubled. The valid range of
+// MaxLoadFactor() is (0,1].
+//
+// Caution: each method must return the same value across multiple invocations.
+// Returning a compile-time constant allows the compiler to optimize the code
+// well.
 template <typename Key, typename Elem, int NumInlinedElements, typename Options,
           typename GetKey, typename Hash, typename EqualTo, typename IndexType>
 class InlinedHashTable {
@@ -206,19 +215,24 @@ class InlinedHashTable {
   // Backdoor methods used by map operator[].
   Elem* Mutable(IndexType index) { return MutableArraySlot(&array_, index); }
   const Elem& Get(IndexType index) const { return ArraySlot(array_, index); }
+
   enum InsertResult { KEY_FOUND, EMPTY_SLOT_FOUND, ARRAY_FULL };
   InsertResult Insert(const Key& key, IndexType* index) {
     InsertResult result = InsertInArray(&array_, key, index);
     if (result == KEY_FOUND) return result;
-    ++array_.size;
-    if (result != ARRAY_FULL) return result;
+    if (result != ARRAY_FULL) {
+      ++array_.size;
+      return result;
+    }
     ExpandTable();
-    return InsertInArray(&array_, key, index);
+    result = InsertInArray(&array_, key, index);
+    assert(result == EMPTY_SLOT_FOUND);
+    ++array_.size;
+    return result;
   }
 
  private:
   static constexpr IndexType kEnd = std::numeric_limits<IndexType>::max();
-  static constexpr double kMaxLoadFactor = 0.75;
 
   // Representation of the hash table.
   struct Array {
@@ -339,7 +353,7 @@ class InlinedHashTable {
       if (IsEmptyKey(key)) {
         return false;
       }
-      if (retries >= array.capacity) {
+      if (retries > array.capacity) {
         return false;
       }
       *index = QuadraticProbe(array, *index, retries);
@@ -361,12 +375,15 @@ class InlinedHashTable {
         return EMPTY_SLOT_FOUND;
       }
       if (IsEmptyKey(key)) {
-        if (array->num_empty_slots < array->capacity * kMaxLoadFactor) {
+        if (array->num_empty_slots < array->capacity * (1 - MaxLoadFactor())) {
           return ARRAY_FULL;
         } else {
           --array->num_empty_slots;
           return EMPTY_SLOT_FOUND;
         }
+      }
+      if (retries > array->capacity) {
+        return ARRAY_FULL;
       }
       *index = QuadraticProbe(*array, *index, retries);
     }
@@ -386,6 +403,7 @@ class InlinedHashTable {
         abort();
       }
       *MutableArraySlot(&new_array, index) = std::move(e);
+      --new_array.num_empty_slots;
     }
     new_array.size = array_.size;
     array_ = std::move(new_array);
@@ -418,10 +436,20 @@ class InlinedHashTable {
 
   static auto SfinaeIsDeletedKey(...) -> bool { return false; }
 
+  template <typename TOptions>
+  static auto SfinaeMaxLoadFactor(const TOptions* options)
+      -> decltype(options->MaxLoadFactor()) {
+    return options->MaxLoadFactor();
+  }
+
+  static auto SfinaeMaxLoadFactor(...) -> double { return 0.75; }
+
   bool IsDeletedKey(const Key& k) const {
     // return KeysEqual(options_.DeletedKey(), k);
     return SfinaeIsDeletedKey(&k, &options_, &equal_to_);
   }
+
+  double MaxLoadFactor() const { return SfinaeMaxLoadFactor(&options_); }
 
   Array array_;
   Options options_;
@@ -474,6 +502,9 @@ class InlinedHashMap {
     return slot->second;
   }
 
+  // Non-standard methods, mainly for testing.
+  size_t capacity() const { return impl_.capacity(); }
+
  private:
   Table impl_;
 };
@@ -512,6 +543,9 @@ class InlinedHashSet {
   void clear() { impl_.clear(); }
   iterator erase(iterator i) { return impl_.erase(i); }
   IndexType erase(const Elem& k) { return impl_.erase(k); }
+
+  // Non-standard methods, mainly for testing.
+  size_t capacity() const { return impl_.capacity(); }
 
  private:
   Table impl_;

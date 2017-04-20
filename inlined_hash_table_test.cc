@@ -20,15 +20,6 @@ class StrTableOptions {
   std::string deleted_key_ = "xxx";
 };
 
-class StrTableOptionsWithoutDeletion {
- public:
-  const std::string& EmptyKey() const { return empty_key_; };
-
- private:
-  std::string empty_key_;
-  std::string deleted_key_ = "xxx";
-};
-
 class IntTableOptions {
  public:
   int EmptyKey() const { return -1; }
@@ -91,6 +82,14 @@ TEST(InlinedHashMap, Move) {
 }
 
 TEST(InlinedHashMap, OptionsWithoutDeletedKeyWorks) {
+  class StrTableOptionsWithoutDeletion {
+   public:
+    const std::string& EmptyKey() const { return empty_key_; };
+
+   private:
+    std::string empty_key_;
+    std::string deleted_key_ = "xxx";
+  };
   InlinedHashMap<std::string, std::string, 8, StrTableOptionsWithoutDeletion> t;
 
   EXPECT_TRUE(t.empty());
@@ -99,6 +98,50 @@ TEST(InlinedHashMap, OptionsWithoutDeletedKeyWorks) {
   EXPECT_FALSE(t.empty());
   t.clear();
   EXPECT_TRUE(t.empty());
+}
+
+// Set the max load factor to 1.
+TEST(InlinedHashMap, OverrideMaxLoadFactor_1) {
+  class Options {
+   public:
+    int EmptyKey() const { return -1; }
+    double MaxLoadFactor() const { return 1.0; }
+  };
+
+  constexpr int kCapacity = 8;
+  InlinedHashSet<int, kCapacity, Options> t;
+  // Empty table should have just the inlined
+  // elements.
+  EXPECT_EQ(t.capacity(), kCapacity);
+  for (int i = 0; i < kCapacity; ++i) {
+    ASSERT_TRUE(t.insert(i).second);
+  }
+  EXPECT_EQ(t.capacity(), kCapacity);
+  t.insert(100);
+  EXPECT_EQ(t.capacity(), kCapacity * 2);
+}
+
+// Set the max load factor to 0.5
+TEST(InlinedHashMap, OverrideMaxLoadFactor_0_5) {
+  class Options {
+   public:
+    int EmptyKey() const { return -1; }
+    double MaxLoadFactor() const { return 0.5; }
+  };
+
+  constexpr int kCapacity = 8;
+  InlinedHashSet<int, kCapacity, Options> t;
+  // Empty table should have just the inlined
+  // elements.
+  EXPECT_EQ(t.capacity(), kCapacity);
+  for (int i = 0; i <= kCapacity; ++i) {
+    ASSERT_TRUE(t.insert(i).second);
+    if (i <= kCapacity / 2) {
+      EXPECT_EQ(t.capacity(), kCapacity) << i;
+    } else {
+      EXPECT_EQ(t.capacity(), kCapacity * 2) << i;
+    }
+  }
 }
 
 TEST(InlinedHashMap, EmptyInlinedArray) {
@@ -110,25 +153,31 @@ TEST(InlinedHashMap, EmptyInlinedArray) {
 
 TEST(InlinedHashSet, Random) {
   InlinedHashSet<int, 8, IntTableOptions> t;
-  std::unordered_set<int> oracle;
+  std::unordered_set<int> model;
 
   std::mt19937 rand(0);
-  for (int i = 0; i < 1000; ++i) {
-    int op = rand() % 10;
-    if (op < 5) {
+  for (int i = 0; i < 10000; ++i) {
+    int op = rand() % 100;
+    if (op < 50) {
       int n = rand() % 100;
-      ASSERT_NE(n, -1);
-      ASSERT_NE(n, -2);
-      ASSERT_EQ(t.insert(n).second, oracle.insert(n).second);
-    } else if (op < 7) {
+      // std::cout << i << "Insert " << n << "\n";
+      ASSERT_EQ(t.insert(n).second, model.insert(n).second);
+    } else if (op < 70) {
       int n = rand() % 100;
-      ASSERT_EQ(t.erase(n), oracle.erase(n));
+      // std::cout << i << "Erase " << n << "\n";
+      ASSERT_EQ(t.erase(n), model.erase(n));
+    } else if (op < 99) {
+      int n = rand() % 100;
+      ASSERT_EQ(t.find(n) == t.end(), model.find(n) == model.end());
     } else {
-      int n = rand() % 100;
-      ASSERT_EQ(t.find(n) == t.end(), oracle.find(n) == oracle.end());
+      t.clear();
+      model.clear();
     }
-    ASSERT_EQ(t.size(), oracle.size());
-    ASSERT_EQ(t.empty(), oracle.empty());
+    ASSERT_EQ(t.size(), model.size());
+    ASSERT_EQ(t.empty(), model.empty());
+    std::set<int> elems_in_t(t.begin(), t.end());
+    std::set<int> elems_in_model(model.begin(), model.end());
+    ASSERT_EQ(elems_in_t, elems_in_model);
   }
 }
 

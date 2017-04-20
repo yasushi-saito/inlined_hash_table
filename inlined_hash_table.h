@@ -3,6 +3,7 @@
 #pragma once
 
 #include <array>
+#include <cassert>
 #include <functional>
 #include <memory>
 
@@ -34,7 +35,7 @@ class InlinedHashTable {
           index_ = kEnd;
           return *this;
         }
-        const Key& k = table_->get_key_(table_->array_.Slot(index_));
+        const Key& k = table_->get_key_.Get(table_->array_.Slot(index_));
         if (!table_->equal_to_(k, table_->empty_key_) &&
             !table_->equal_to_(k, table_->deleted_key_)) {
           break;
@@ -51,8 +52,8 @@ class InlinedHashTable {
   iterator begin() {
     size_t i = 0;
     for (;;) {
-      const Key& k = get_key_(array_.Slot(i));
-      if (!equal_to_(empty_key_, k) && !equal_to_(deleted_key_, k)) {
+      const Key& k = get_key_.Get(array_.Slot(i));
+      if (!IsEmptyKey(k) && !IsDeletedKey(k)) {
         return iterator(this, i);
       }
       if (++i >= array_.capacity()) {
@@ -63,8 +64,17 @@ class InlinedHashTable {
 
   iterator end() { return iterator(this, kEnd); }
 
-  void set_empty_key(const Key& k) { empty_key_ = k; }
-  void set_deleted_key(const Key& k) { deleted_key_ = k; }
+  void set_empty_key(const Key& k) {
+    assert((flags_ & kEmptyKeySet) == 0);
+    flags_ |= kEmptyKeySet;
+    empty_key_ = k;
+  }
+
+  void set_deleted_key(const Key& k) {
+    assert((flags_ & kDeletedKeySet) == 0);
+    flags_ |= kDeletedKeySet;
+    deleted_key_ = k;
+  }
 
   iterator find(const Key& k) {
     size_t index;
@@ -75,8 +85,20 @@ class InlinedHashTable {
     }
   }
 
+  iterator erase(iterator i) {
+    assert((flags_ & kDeletedKeySet) != 0);
+    Elem& elem = *i;
+    *get_key_.Mutable(&elem) = deleted_key_;
+  }
+
+  size_t erase(const Key& k) {
+    iterator i = find(k);
+    if (i == end()) return 0;
+    erase(i);
+  }
+
   std::pair<iterator, bool> insert(Elem&& value) {
-    std::pair<size_t, bool> result = Insert(get_key_(value));
+    std::pair<size_t, bool> result = Insert(get_key_.Get(value));
     if (!result.second) {
       return std::make_pair(iterator(this, result.first), false);
     }
@@ -148,15 +170,16 @@ class InlinedHashTable {
   };
 
   bool Find(const Array& array, const Key& k, size_t* index) const {
+    assert((flags_ & kEmptyKeySet) != 0);
     *index = hash_(k) % array.capacity();
     const size_t start_index = *index;
     for (int retry = 1;; ++retry) {
       const Elem& elem = array.Slot(*index);
-      const Key& key = get_key_(elem);
+      const Key& key = get_key_.Get(elem);
       if (equal_to_(key, k)) {
         return true;
       }
-      if (equal_to_(key, empty_key_)) {
+      if (IsEmptyKey(key)) {
         return false;
       }
       if (retry >= array.capacity()) {
@@ -172,7 +195,7 @@ class InlinedHashTable {
     Array new_array(new_capacity);
     for (Elem& e : *this) {
       size_t index;
-      if (Find(new_array, get_key_(e), &index)) {
+      if (Find(new_array, get_key_.Get(e), &index)) {
         abort();
       }
       *new_array.Mutable(index) = std::move(e);
@@ -180,8 +203,20 @@ class InlinedHashTable {
     array_ = std::move(new_array);
   }
 
+  bool IsEmptyKey(const Key& k) const { return equal_to_(empty_key_, k); }
+
+  bool IsDeletedKey(const Key& k) const {
+    if (!(flags_ & kDeletedKeySet)) {
+      return false;
+    }
+    return equal_to_(deleted_key_, k);
+  }
+
   static constexpr size_t kFull = std::numeric_limits<size_t>::max() - 1;
   static constexpr size_t kEnd = std::numeric_limits<size_t>::max();
+  static constexpr int kEmptyKeySet = 1;
+  static constexpr int kDeletedKeySet = 2;
+  unsigned flags_ = 0;
   GetKey get_key_;
   Hash hash_;
   EqualTo equal_to_;
@@ -197,7 +232,8 @@ class InlinedHashMap {
  public:
   using Elem = std::pair<Key, Value>;
   struct GetKey {
-    const Key& operator()(const Elem& elem) const { return elem.first; }
+    const Key& Get(const Elem& elem) const { return elem.first; }
+    Key* Mutable(Elem* elem) { return &elem->first; }
   };
   using Table =
       InlinedHashTable<Key, Elem, NumInlinedElements, GetKey, Hash, EqualTo>;
@@ -206,9 +242,12 @@ class InlinedHashMap {
   void set_empty_key(const Key& k) { impl_.set_empty_key(k); }
   void set_deleted_key(const Key& k) { impl_.set_deleted_key(k); }
   bool empty() const { return impl_.empty(); }
-  iterator begin() { return impl_. begin(); }
-  iterator end() { return impl_. end(); }
+  iterator begin() { return impl_.begin(); }
+  iterator end() { return impl_.end(); }
   size_t size() const { return impl_.size(); }
+
+  iterator erase(iterator i) { return impl_.erase(i); }
+  size_t erase(const Key& k) { return impl_.erase(k); }
 
   std::pair<iterator, bool> insert(Elem&& value) {
     return impl_.insert(std::move(value));
@@ -224,6 +263,36 @@ class InlinedHashMap {
     }
     return slot->second;
   }
+
+ private:
+  Table impl_;
+};
+
+template <typename Elem, int NumInlinedElements,
+          typename Hash = std::hash<Elem>,
+          typename EqualTo = std::equal_to<Elem>>
+class InlinedHashSet {
+ public:
+  struct GetKey {
+    const Elem& Get(const Elem& elem) const { return elem; }
+    Elem* Mutable(Elem* elem) { return elem; }
+  };
+  using Table =
+      InlinedHashTable<Elem, Elem, NumInlinedElements, GetKey, Hash, EqualTo>;
+
+  using iterator = typename Table::iterator;
+  void set_empty_key(const Elem& k) { impl_.set_empty_key(k); }
+  void set_deleted_key(const Elem& k) { impl_.set_deleted_key(k); }
+  bool empty() const { return impl_.empty(); }
+  iterator begin() { return impl_.begin(); }
+  iterator end() { return impl_.end(); }
+  size_t size() const { return impl_.size(); }
+
+  std::pair<iterator, bool> insert(Elem&& value) {
+    return impl_.insert(std::move(value));
+  }
+
+  iterator find(const Elem& k) { return impl_.find(k); }
 
  private:
   Table impl_;

@@ -12,6 +12,7 @@
 // TODO: move constructors
 // TODO: allow passing Hash, EqualTo, Options through the constructor.
 // TODO: Allow overriding the size type (size_t) to compress the table overhead.
+// TODO: Do empty base optimization when NumInlinedElements==0.
 
 // InlinedHashTable is an implementation detail that underlies InlinedHashMap
 // and InlinedHashSet. It's not for public use.

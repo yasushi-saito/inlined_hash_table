@@ -2,5 +2,6 @@
 
 Fast open-addressed C++ hash table
 
-The API is very close to google's dense hash map, but it should be faster
-(hope).
+The API is very close to google's
+[dense hash map](http://goog-sparsehash.sourceforge.net/doc/dense_hash_map.html),
+but it should be faster (I'd hope).

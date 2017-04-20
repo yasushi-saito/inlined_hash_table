@@ -6,6 +6,7 @@
 #include <random>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 
 #include "inlined_hash_table.h"
 
@@ -30,6 +31,30 @@ TEST(InlinedHashMap, Simple) {
   t.erase("hello");
   EXPECT_TRUE(t.empty());
   EXPECT_TRUE(t.find("hello") == t.end());
+}
+
+TEST(InlinedHashSet, Random) {
+  InlinedHashSet<int, 8> t;
+  std::unordered_set<int> oracle;
+  t.set_empty_key(-1);
+  t.set_deleted_key(-2);
+
+  std::mt19937 rand(0);
+  for (int i = 0; i < 1000; ++i) {
+    int op = rand() % 10;
+    if (op < 5) {
+      int n = rand() % 100;
+      ASSERT_EQ(t.insert(n).second, oracle.insert(n).second);
+    } else if (op < 7) {
+      int n = rand() % 100;
+      ASSERT_EQ(t.erase(n), oracle.erase(n));
+    } else {
+      int n = rand() % 100;
+      ASSERT_EQ(t.find(n) == t.end(), oracle.find(n) == oracle.end());
+    }
+    ASSERT_EQ(t.size(), oracle.size());
+    ASSERT_EQ(t.empty(), oracle.empty());
+  }
 }
 
 TEST(InlinedHashSet, Simple) {
@@ -71,7 +96,7 @@ TEST(Benchmark, UnorderedMapInsert) {
   std::cout << "Insert elapsed: " << elapsed.count() << "\n";
 
   std::mt19937 rand(0);
-  //std::shuffle(values.begin(), values.end(), rand);
+  // std::shuffle(values.begin(), values.end(), rand);
   start = std::chrono::system_clock::now();
   for (unsigned v : values) {
     ASSERT_EQ(map[v], v + 1);
@@ -97,7 +122,7 @@ TEST(Benchmark, InlinedMapInsert) {
   std::cout << "Elapsed: " << elapsed.count() << "\n";
 
   std::mt19937 rand(0);
-  //std::shuffle(values.begin(), values.end(), rand);
+  // std::shuffle(values.begin(), values.end(), rand);
   start = std::chrono::system_clock::now();
   for (unsigned v : values) {
     ASSERT_EQ(map[v], v + 1);

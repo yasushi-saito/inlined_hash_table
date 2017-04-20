@@ -56,13 +56,49 @@ TEST(InlinedHashMap, Simple) {
   EXPECT_TRUE(t.find("hello") == t.end());
 }
 
-TEST(InlinedHashMap, NoDeletion) {
+TEST(InlinedHashMap, Clear) {
+  Map t;
+  t["h0"] = "w0";
+  t["h1"] = "w1";
+  t.clear();
+  EXPECT_TRUE(t.empty());
+  EXPECT_EQ(0, t.size());
+  EXPECT_TRUE(t.find("h0") == t.end());
+  EXPECT_TRUE(t.find("h1") == t.end());
+}
+
+TEST(InlinedHashMap, Copy) {
+  Map t;
+  t["h0"] = "w0";
+  Map t2 = t;
+  EXPECT_FALSE(t2.empty());
+  EXPECT_EQ(1, t2.size());
+  EXPECT_FALSE(t.empty());
+  EXPECT_EQ(1, t.size());
+  EXPECT_EQ(t2["h0"], "w0");
+  EXPECT_EQ(t["h0"], "w0");
+}
+
+TEST(InlinedHashMap, Move) {
+  Map t;
+  t["h0"] = "w0";
+  Map t2 = std::move(t);
+  EXPECT_FALSE(t2.empty());
+  EXPECT_EQ(1, t2.size());
+  EXPECT_EQ(t2["h0"], "w0");
+  EXPECT_TRUE(t.empty());
+  EXPECT_TRUE(t.find("h0") == t.end());
+}
+
+TEST(InlinedHashMap, OptionsWithoutDeletedKeyWorks) {
   InlinedHashMap<std::string, std::string, 8, StrTableOptionsWithoutDeletion> t;
 
   EXPECT_TRUE(t.empty());
   EXPECT_TRUE(t.insert(std::make_pair("hello", "world")).second);
-  EXPECT_TRUE(t.erase("hello"));
+  EXPECT_EQ("world", t["hello"]);
   EXPECT_FALSE(t.empty());
+  t.clear();
+  EXPECT_TRUE(t.empty());
 }
 
 TEST(InlinedHashMap, EmptyInlinedArray) {
@@ -81,6 +117,8 @@ TEST(InlinedHashSet, Random) {
     int op = rand() % 10;
     if (op < 5) {
       int n = rand() % 100;
+      ASSERT_NE(n, -1);
+      ASSERT_NE(n, -2);
       ASSERT_EQ(t.insert(n).second, oracle.insert(n).second);
     } else if (op < 7) {
       int n = rand() % 100;

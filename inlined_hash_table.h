@@ -231,13 +231,9 @@ class InlinedHashTable {
       }
     }
 
-    Array(const Array& other) {
-      *this = other;
-    }
+    Array(const Array& other) { *this = other; }
 
-    Array(Array&& other) {
-      *this = std::move(other);
-    }
+    Array(Array&& other) { *this = std::move(other); }
 
     Array& operator=(const Array& other) {
       size = other.size;
@@ -258,6 +254,11 @@ class InlinedHashTable {
       num_empty_slots = other.num_empty_slots;
       inlined = std::move(other.inlined);
       outlined = std::move(other.outlined);
+
+      other.outlined.reset();
+      other.size = 0;
+      other.num_empty_slots = 0;
+      other.capacity = other.inlined.size();
       return *this;
     }
 
@@ -379,6 +380,8 @@ class InlinedHashTable {
     InitArray(options_.EmptyKey(), &new_array);
     for (Elem& e : *this) {
       IndexType index;
+      const Key& key = ExtractKey(e);
+      if (IsEmptyKey(key) || IsDeletedKey(key)) continue;
       if (FindInArray(new_array, ExtractKey(e), &index)) {
         abort();
       }
@@ -406,11 +409,11 @@ class InlinedHashTable {
     return KeysEqual(options_.EmptyKey(), k);
   }
 
-  template <typename TOptions, typename TEqualTo>
+  template <typename TOptions>
   static auto SfinaeIsDeletedKey(const Key* k, const TOptions* options,
-                                 const TEqualTo* equal_to)
-      -> decltype(equal_to(options->DeletedKey(), *k)) {
-    return equal_to(options->DeletedKey(), *k);
+                                 const EqualTo* equal_to)
+      -> decltype((*equal_to)(options->DeletedKey(), *k)) {
+    return (*equal_to)(options->DeletedKey(), *k);
   }
 
   static auto SfinaeIsDeletedKey(...) -> bool { return false; }

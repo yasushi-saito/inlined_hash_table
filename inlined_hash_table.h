@@ -119,7 +119,6 @@ class InlinedHashTable {
   }
 
  private:
-  static constexpr size_t kFull = std::numeric_limits<size_t>::max() - 1;
   static constexpr size_t kEnd = std::numeric_limits<size_t>::max();
   static constexpr double kMaxLoadFactor = 0.75;
 
@@ -139,7 +138,7 @@ class InlinedHashTable {
     std::unique_ptr<Elem[]> outlined;
     // # of filled slots.
     size_t size;
-    // Capaacity of inlined + capacity of outlined.
+    // Capacity of inlined + capacity of outlined. Always a power of two.
     size_t capacity;
     // Number of empty slots, i.e., capacity - (# of filled slots + # of
     // tombstones).
@@ -180,14 +179,14 @@ class InlinedHashTable {
     return &array->outlined[index - NumInlinedElements];
   }
 
-  // Find the first filled slot at or after from.
+  // Find the first filled slot at or after "from". For incremenenting an
+  // iterator.
   size_t NextValidElementInArray(const Array& array, size_t from) const {
     size_t i = from;
     for (;;) {
       if (i >= array.capacity) {
         return kEnd;
       }
-
       const Key& k = get_key_.Get(ArraySlot(array, i));
       if (!IsEmptyKey(k) && !IsDeletedKey(k)) {
         return i;
@@ -245,7 +244,8 @@ class InlinedHashTable {
     }
   }
 
-  // Double the hash table; rehash all the existing elements.
+  // Double the hash table size. Culls tombstones and move all the existing
+  // elements and
   void ExpandTable() {
     size_t new_capacity = array_.capacity * 2;
     Array new_array(new_capacity);
@@ -288,22 +288,19 @@ class InlinedHashMap {
   };
   using Table =
       InlinedHashTable<Key, Elem, NumInlinedElements, GetKey, Hash, EqualTo>;
-
   using iterator = typename Table::iterator;
+
   void set_empty_key(const Key& k) { impl_.set_empty_key(k); }
   void set_deleted_key(const Key& k) { impl_.set_deleted_key(k); }
   bool empty() const { return impl_.empty(); }
   iterator begin() { return impl_.begin(); }
   iterator end() { return impl_.end(); }
   size_t size() const { return impl_.size(); }
-
   iterator erase(iterator i) { return impl_.erase(i); }
   size_t erase(const Key& k) { return impl_.erase(k); }
-
   std::pair<iterator, bool> insert(Elem&& value) {
     return impl_.insert(std::move(value));
   }
-
   iterator find(const Key& k) { return impl_.find(k); }
   Value& operator[](const Key& k) {
     size_t index;
@@ -331,15 +328,14 @@ class InlinedHashSet {
   };
   using Table =
       InlinedHashTable<Elem, Elem, NumInlinedElements, GetKey, Hash, EqualTo>;
-
   using iterator = typename Table::iterator;
+
   void set_empty_key(const Elem& k) { impl_.set_empty_key(k); }
   void set_deleted_key(const Elem& k) { impl_.set_deleted_key(k); }
   bool empty() const { return impl_.empty(); }
   iterator begin() { return impl_.begin(); }
   iterator end() { return impl_.end(); }
   size_t size() const { return impl_.size(); }
-
   std::pair<iterator, bool> insert(Elem&& value) {
     return impl_.insert(std::move(value));
   }

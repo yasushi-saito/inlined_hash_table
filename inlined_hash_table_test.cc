@@ -71,7 +71,7 @@ TEST(Benchmark, UnorderedMapInsert) {
   std::cout << "Insert elapsed: " << elapsed.count() << "\n";
 
   std::mt19937 rand(0);
-  std::shuffle(values.begin(), values.end(), rand);
+  //std::shuffle(values.begin(), values.end(), rand);
   start = std::chrono::system_clock::now();
   for (unsigned v : values) {
     ASSERT_EQ(map[v], v + 1);
@@ -97,7 +97,7 @@ TEST(Benchmark, InlinedMapInsert) {
   std::cout << "Elapsed: " << elapsed.count() << "\n";
 
   std::mt19937 rand(0);
-  std::shuffle(values.begin(), values.end(), rand);
+  //std::shuffle(values.begin(), values.end(), rand);
   start = std::chrono::system_clock::now();
   for (unsigned v : values) {
     ASSERT_EQ(map[v], v + 1);

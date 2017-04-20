@@ -1,0 +1,6 @@
+cmake_minimum_required(VERSION 2.6)
+project(InlinedHashTable)
+add_executable(InlinedHashTableTest inlined_hash_table_test.cc)
+find_package(GTest REQUIRED)
+include_directories(${GTEST_INCLUDE_DIRS})
+target_link_libraries(InlinedHashTableTest ${GTEST_LIBRARIES} pthread)

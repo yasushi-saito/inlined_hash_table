@@ -58,6 +58,32 @@ TEST(InlinedHashMap, Clear) {
   EXPECT_TRUE(t.find("h1") == t.end());
 }
 
+TEST(InlinedHashMap, Iterators) {
+  Map t;
+  t["h0"] = "w0";
+  t["h1"] = "w1";
+  {
+    auto it = t.begin();
+    EXPECT_EQ("h0", it->first);
+    EXPECT_EQ("w0", it->second);
+    auto it2 = it++;
+    EXPECT_EQ("h0", it2->first);
+    EXPECT_EQ("w0", it2->second);
+    EXPECT_EQ("h1", it->first);
+    EXPECT_EQ("w1", it->second);
+  }
+  {
+    Map::const_iterator it = t.begin();
+    EXPECT_EQ("h0", it->first);
+    EXPECT_EQ("w0", it->second);
+    auto it2 = it++;
+    EXPECT_EQ("h0", it2->first);
+    EXPECT_EQ("w0", it2->second);
+    EXPECT_EQ("h1", it->first);
+    EXPECT_EQ("w1", it->second);
+  }
+}
+
 TEST(InlinedHashMap, Copy) {
   Map t;
   t["h0"] = "w0";

@@ -9,7 +9,6 @@
 #include <type_traits>
 
 // TODO: size reservation
-// TODO: allow passing Hash, EqualTo, Options through the constructor.
 // TODO: Do empty base optimization when NumInlinedElements==0.
 
 // InlinedHashTable is an implementation detail that underlies InlinedHashMap
@@ -40,8 +39,12 @@ class InlinedHashTable {
  public:
   static_assert((NumInlinedElements & (NumInlinedElements - 1)) == 0,
                 "NumInlinedElements must be a power of two");
-  InlinedHashTable()
-      : array_(NumInlinedElements > 0 ? NumInlinedElements : 16) {
+  InlinedHashTable(IndexType bucket_count, const Options& options,
+                   const Hash& hash, const EqualTo& equal_to)
+      : array_(NumInlinedElements > 0 ? NumInlinedElements : 16),
+        options_(options),
+        hash_(hash),
+        equal_to_(equal_to) {
     InitArray(options_.EmptyKey(), &array_);
   }
 
@@ -74,6 +77,7 @@ class InlinedHashTable {
     using Table = InlinedHashTable<Key, Elem, NumInlinedElements, Options,
                                    GetKey, Hash, EqualTo, IndexType>;
     iterator(Table* table, IndexType index) : table_(table), index_(index) {}
+    iterator(const typename Table::iterator& i) : table_(i.table_), index_(i.index_) {}
     bool operator==(const iterator& other) const {
       return index_ == other.index_;
     }
@@ -84,10 +88,15 @@ class InlinedHashTable {
     Elem& operator*() const { return *table_->Mutable(index_); }
     Elem* operator->() const { return table_->Mutable(index_); }
 
-    // TODO(saito) support both pre and post increment ops.
-    iterator operator++() {
+    iterator operator++() {  // ++it
       index_ = table_->NextValidElementInArray(table_->array_, index_ + 1);
       return *this;
+    }
+
+    iterator operator++(int unused) {  // it++
+      iterator r(*this);
+      index_ = table_->NextValidElementInArray(table_->array_, index_ + 1);
+      return r;
     }
 
    private:
@@ -100,6 +109,9 @@ class InlinedHashTable {
    public:
     using Table = InlinedHashTable<Key, Elem, NumInlinedElements, Options,
                                    GetKey, Hash, EqualTo, IndexType>;
+    const_iterator() {}
+    const_iterator(const Table::iterator& i) : table_(i.table_), index_(i.index_) {}
+    const_iterator(const Table::const_iterator& i) : table_(i.table_), index_(i.index_) {}
     const_iterator(const Table* table, IndexType index)
         : table_(table), index_(index) {}
     bool operator==(const const_iterator& other) const {
@@ -112,10 +124,15 @@ class InlinedHashTable {
     const Elem& operator*() const { return table_->Get(index_); }
     const Elem* operator->() const { return &table_->Get(index_); }
 
-    // TODO(saito) support both pre and post increment ops.
-    const_iterator operator++() {
+    const_iterator operator++() {  // ++it
       index_ = table_->NextValidElementInArray(table_->array_, index_ + 1);
       return *this;
+    }
+
+    const_iterator operator++(int unused) {  // it++
+      const_iterator r(*this);
+      index_ = table_->NextValidElementInArray(table_->array_, index_ + 1);
+      return r;
     }
 
    private:
@@ -474,6 +491,11 @@ class InlinedHashMap {
   using iterator = typename Table::iterator;
   using const_iterator = typename Table::const_iterator;
 
+  InlinedHashMap() : impl_(0, Options(), Hash(), EqualTo()) {}
+  InlinedHashMap(IndexType bucket_count, const Options& options = Options(),
+                 const Hash& hash = Hash(), const EqualTo& equal_to = EqualTo())
+      : impl_(bucket_count, options, hash, equal_to) {}
+
   bool empty() const { return impl_.empty(); }
   iterator begin() { return impl_.begin(); }
   iterator end() { return impl_.end(); }
@@ -523,6 +545,10 @@ class InlinedHashSet {
   using iterator = typename Table::iterator;
   using const_iterator = typename Table::const_iterator;
 
+  InlinedHashSet() : impl_(0, Options(), Hash(), EqualTo()) {}
+  InlinedHashSet(IndexType bucket_count, const Options& options = Options(),
+                 const Hash& hash = Hash(), const EqualTo& equal_to = EqualTo())
+      : impl_(bucket_count, options, hash, equal_to) {}
   bool empty() const { return impl_.empty(); }
   iterator begin() { return impl_.begin(); }
   iterator end() { return impl_.end(); }

@@ -8,6 +8,7 @@
 #include <unordered_map>
 #include <unordered_set>
 
+#include "benchmark/benchmark.h"
 #include "inlined_hash_table.h"
 
 class StrTableOptions {
@@ -247,62 +248,63 @@ std::vector<unsigned> TestValues() {
   return values;
 }
 
-TEST(Benchmark, UnorderedMapInsert) {
+template <typename Map>
+void DoInsertTest(benchmark::State& state, Map* map) {
   std::vector<unsigned> values = TestValues();
-  auto start = std::chrono::system_clock::now();
-  std::unordered_map<unsigned, unsigned> map;
-  for (unsigned v : values) {
-    map[v] = v + 1;
+  while (state.KeepRunning()) {
+    for (unsigned v : values) {
+      (*map)[v] = v + 1;
+    }
   }
-  auto end = std::chrono::system_clock::now();
   for (int i = 0; i < kBenchmarkIters; ++i) {
-    ASSERT_EQ(map[values[i]], values[i] + 1);
+    ASSERT_EQ((*map)[values[i]], values[i] + 1);
   }
-  std::chrono::duration<double> elapsed = end - start;
-  std::cout << "Insert elapsed: " << elapsed.count() << "\n";
-
-  std::mt19937 rand(0);
-  // std::shuffle(values.begin(), values.end(), rand);
-  start = std::chrono::system_clock::now();
-  for (unsigned v : values) {
-    ASSERT_EQ(map[v], v + 1);
-  }
-  end = std::chrono::system_clock::now();
-  elapsed = end - start;
-  std::cout << "Lookup elapsed: " << elapsed.count() << "\n";
 }
 
-TEST(Benchmark, InlinedMapInsert) {
-  class IntTableOptions {
-   public:
-    unsigned EmptyKey() const { return -1; }
-    unsigned DeletedKey() const { return -2; }
-  };
-  std::vector<unsigned> values = TestValues();
-  auto start = std::chrono::system_clock::now();
+void BM_Insert_InlinedMap(benchmark::State& state) {
   InlinedHashMap<unsigned, unsigned, 8, IntTableOptions> map;
-  for (unsigned v : values) {
-    map[v] = v + 1;
-  }
-  auto end = std::chrono::system_clock::now();
-  for (int i = 0; i < kBenchmarkIters; ++i) {
-    ASSERT_EQ(map[values[i]], values[i] + 1);
-  }
-  std::chrono::duration<double> elapsed = end - start;
-  std::cout << "Elapsed: " << elapsed.count() << "\n";
-
-  std::mt19937 rand(0);
-  // std::shuffle(values.begin(), values.end(), rand);
-  start = std::chrono::system_clock::now();
-  for (unsigned v : values) {
-    ASSERT_EQ(map[v], v + 1);
-  }
-  end = std::chrono::system_clock::now();
-  elapsed = end - start;
-  std::cout << "Lookup elapsed: " << elapsed.count() << "\n";
+  DoInsertTest(state, &map);
 }
+BENCHMARK(BM_Insert_InlinedMap);
+
+void BM_Insert_UnorderedMap(benchmark::State& state) {
+  std::unordered_map<unsigned, unsigned> map;
+  DoInsertTest(state, &map);
+}
+BENCHMARK(BM_Insert_UnorderedMap);
+
+template <typename Map>
+void DoLookupTest(benchmark::State& state, Map* map) {
+  std::mt19937 rand(0);
+  std::vector<unsigned> values = TestValues();
+  for (unsigned v : values) {
+    (*map)[v] = v + 1;
+  }
+
+  while (state.KeepRunning()) {
+    for (unsigned v : values) {
+      ASSERT_EQ((*map)[v], v + 1);
+    }
+  }
+}
+
+void BM_Lookup_InlinedMap(benchmark::State& state) {
+  InlinedHashMap<unsigned, unsigned, 8, IntTableOptions> map;
+  DoLookupTest(state, &map);
+}
+
+BENCHMARK(BM_Lookup_InlinedMap);
+
+void BM_Lookup_UnorderedMap(benchmark::State& state) {
+  std::unordered_map<unsigned, unsigned> map;
+  DoLookupTest(state, &map);
+}
+
+BENCHMARK(BM_Lookup_UnorderedMap);
 
 int main(int argc, char** argv) {
   ::testing::InitGoogleTest(&argc, argv);
+  ::benchmark::Initialize(&argc, argv);
+  ::benchmark::RunSpecifiedBenchmarks();
   return RUN_ALL_TESTS();
 }

@@ -3,8 +3,10 @@
 #pragma once
 
 #include <array>
+#include <cmath>
 #include <cassert>
 #include <functional>
+#include <limits>
 #include <memory>
 #include <type_traits>
 
@@ -38,7 +40,6 @@ template <typename Key, typename Elem, int NumInlinedElements, typename Options,
           typename GetKey, typename Hash, typename EqualTo, typename IndexType>
 class InlinedHashTable {
  public:
-  static_assert(NumInlinedElements > 0, "NumInlinedElements must be >0");
   static_assert((NumInlinedElements & (NumInlinedElements - 1)) == 0,
                 "NumInlinedElements must be a power of two");
   InlinedHashTable(IndexType bucket_count, const Options& options,
@@ -372,6 +373,7 @@ class InlinedHashTable {
   // Find "k" in the array. If found, set *index to the location of the key in
   // the array.
   bool FindInArray(const Array& array, const Key& k, IndexType* index) const {
+    if (array.capacity == 0) return false;
     *index = ComputeHash(k) & (array.capacity - 1);
     const IndexType start_index = *index;
     for (int retries = 1;; ++retries) {
@@ -393,6 +395,7 @@ class InlinedHashTable {
   // Either find "k" in the array, or find a slot into which "k" can be
   // inserted.
   InsertResult InsertInArray(Array* array, const Key& k, IndexType* index) {
+    if (array->capacity == 0) return ARRAY_FULL;
     *index = ComputeHash(k) & (array->capacity - 1);
     const IndexType start_index = *index;
     for (int retries = 1;; ++retries) {

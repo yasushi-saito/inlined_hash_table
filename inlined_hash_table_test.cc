@@ -48,6 +48,16 @@ TEST(InlinedHashMap, Simple) {
   EXPECT_TRUE(t.find("hello") == t.end());
 }
 
+TEST(InlinedHashMap, EmptyInlinedPart) {
+  InlinedHashMap<std::string, std::string, 0, StrTableOptions> t;
+  t["k"] = "v";
+  auto it = t.begin();
+  EXPECT_EQ("k", (*it).first);
+  EXPECT_EQ("v", (*it).second);
+  ++it;
+  EXPECT_TRUE(it == t.end());
+}
+
 TEST(InlinedHashMap, Clear) {
   Map t;
   t["h0"] = "w0";

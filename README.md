@@ -33,7 +33,7 @@ void Test() {
   Map map;
   map[1] = 2;
   map[3] = 4;
-  for (auto [key, value] = map) {
+  for (auto [key, value] : map) {
      printf("entry %d %d\n", key, value);
   }
 }

@@ -8,9 +8,6 @@
 #include <memory>
 #include <type_traits>
 
-// TODO: size reservation
-// TODO: Do empty base optimization when NumInlinedElements==0.
-
 // InlinedHashTable is an implementation detail that underlies InlinedHashMap
 // and InlinedHashSet. It's not for public use.
 //
@@ -19,9 +16,9 @@
 // Options is a class that defines one required method, and two optional
 // methods.
 //
-//   const Key& EmptyKey() const;
-//   const Key& DeletedKey() const;
-//   double MaxLoadFactor() const;
+//   const Key& EmptyKey() const;    // required
+//   const Key& DeletedKey() const;  // optional
+//   double MaxLoadFactor() const;   // optional
 //
 // EmptyKey() should return a key that represents an unused key.  DeletedKey()
 // should return a tombstone key. DeletedKey() needs to be defined iff you use
@@ -33,18 +30,23 @@
 // Caution: each method must return the same value across multiple invocations.
 // Returning a compile-time constant allows the compiler to optimize the code
 // well.
+//
+// TODO: allow NumInlinedElements to be zero.
+// TODO: implement bucket reservation.
+
 template <typename Key, typename Elem, int NumInlinedElements, typename Options,
           typename GetKey, typename Hash, typename EqualTo, typename IndexType>
 class InlinedHashTable {
  public:
+  static_assert(NumInlinedElements > 0, "NumInlinedElements must be >0");
   static_assert((NumInlinedElements & (NumInlinedElements - 1)) == 0,
                 "NumInlinedElements must be a power of two");
   InlinedHashTable(IndexType bucket_count, const Options& options,
                    const Hash& hash, const EqualTo& equal_to)
-      : array_(NumInlinedElements > 0 ? NumInlinedElements : 16),
-        options_(options),
+      : options_(options),
         hash_(hash),
-        equal_to_(equal_to) {
+        equal_to_(equal_to),
+        array_(ComputeCapacity(bucket_count)) {
     InitArray(options_.EmptyKey(), &array_);
   }
 
@@ -77,7 +79,8 @@ class InlinedHashTable {
     using Table = InlinedHashTable<Key, Elem, NumInlinedElements, Options,
                                    GetKey, Hash, EqualTo, IndexType>;
     iterator(Table* table, IndexType index) : table_(table), index_(index) {}
-    iterator(const typename Table::iterator& i) : table_(i.table_), index_(i.index_) {}
+    iterator(const typename Table::iterator& i)
+        : table_(i.table_), index_(i.index_) {}
     bool operator==(const iterator& other) const {
       return index_ == other.index_;
     }
@@ -110,8 +113,10 @@ class InlinedHashTable {
     using Table = InlinedHashTable<Key, Elem, NumInlinedElements, Options,
                                    GetKey, Hash, EqualTo, IndexType>;
     const_iterator() {}
-    const_iterator(const Table::iterator& i) : table_(i.table_), index_(i.index_) {}
-    const_iterator(const Table::const_iterator& i) : table_(i.table_), index_(i.index_) {}
+    const_iterator(const Table::iterator& i)
+        : table_(i.table_), index_(i.index_) {}
+    const_iterator(const Table::const_iterator& i)
+        : table_(i.table_), index_(i.index_) {}
     const_iterator(const Table* table, IndexType index)
         : table_(table), index_(index) {}
     bool operator==(const const_iterator& other) const {
@@ -241,7 +246,7 @@ class InlinedHashTable {
       ++array_.size;
       return result;
     }
-    ExpandTable();
+    ExpandTable(1);
     result = InsertInArray(&array_, key, index);
     assert(result == EMPTY_SLOT_FOUND);
     ++array_.size;
@@ -309,6 +314,14 @@ class InlinedHashTable {
   static IndexType QuadraticProbe(const Array& array, IndexType current,
                                   int retries) {
     return (current + retries) & (array.capacity - 1);
+  }
+
+  IndexType ComputeCapacity(IndexType desired) {
+    desired /= MaxLoadFactor();
+    if (desired < NumInlinedElements) desired = NumInlinedElements;
+    if (desired <= 0) return desired;
+    return static_cast<IndexType>(1)
+           << static_cast<int>(std::ceil(std::log2(desired)));
   }
 
   // Fill "array" with empty_key.
@@ -406,10 +419,11 @@ class InlinedHashTable {
     }
   }
 
-  // Double the hash table size. Culls tombstones and move all the existing
-  // elements and
-  void ExpandTable() {
-    IndexType new_capacity = array_.capacity * 2;
+  // Rehash the hash table. "delta" is the number of elements to add to the
+  // current table. It's used to compute the capacity of the new table.  Culls
+  // tombstones and move all the existing elements and
+  void ExpandTable(IndexType delta) {
+    const IndexType new_capacity = ComputeCapacity(array_.size + delta);
     Array new_array(new_capacity);
     InitArray(options_.EmptyKey(), &new_array);
     for (Elem& e : *this) {
@@ -468,11 +482,11 @@ class InlinedHashTable {
 
   double MaxLoadFactor() const { return SfinaeMaxLoadFactor(&options_); }
 
-  Array array_;
   Options options_;
   GetKey get_key_;
   Hash hash_;
   EqualTo equal_to_;
+  Array array_;
 };
 
 template <typename Key, typename Value, int NumInlinedElements,

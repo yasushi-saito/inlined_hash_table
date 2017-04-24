@@ -58,6 +58,30 @@ TEST(InlinedHashMap, Clear) {
   EXPECT_TRUE(t.find("h1") == t.end());
 }
 
+TEST(InlinedHashMap, Capacity0) {
+  Map t(0);
+  EXPECT_EQ(8, t.capacity());
+}
+
+TEST(InlinedHashMap, Capacity5) {
+  Map t(5);
+  EXPECT_EQ(8, t.capacity());
+}
+
+TEST(InlinedHashMap, Capacity8) {
+  Map t(8);  // MaxLoadFactor will bump the capacity to 16
+  EXPECT_EQ(16, t.capacity());
+
+  {
+    class StrTableOptions2 : public StrTableOptions {
+     public:
+      double MaxLoadFactor() const { return 1; }
+    };
+    InlinedHashMap<std::string, std::string, 8, StrTableOptions2> t2(8);
+    EXPECT_EQ(8, t2.capacity());
+  }
+}
+
 TEST(InlinedHashMap, Iterators) {
   Map t;
   t["h0"] = "w0";
@@ -168,13 +192,6 @@ TEST(InlinedHashMap, OverrideMaxLoadFactor_0_5) {
       EXPECT_EQ(t.capacity(), kCapacity * 2) << i;
     }
   }
-}
-
-TEST(InlinedHashMap, EmptyInlinedArray) {
-  InlinedHashSet<int, 0, IntTableOptions> s;
-  ASSERT_TRUE(s.insert(10).second);
-  ASSERT_TRUE(s.insert(11).second);
-  ASSERT_FALSE(s.insert(10).second);
 }
 
 TEST(InlinedHashSet, Random) {

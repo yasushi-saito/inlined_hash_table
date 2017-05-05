@@ -42,6 +42,11 @@ struct DefaultInlinedHashTableOptions {
 
 class InlinedHashTableBucketMetadata {
  public:
+  InlinedHashTableBucketMetadata() {
+    mask_ = 0;
+    origin_ = 0;
+  }
+
   bool HasLeaf(int index) const { return (mask_ & (1U << index)) != 0; }
   void SetLeaf(int index) {
     assert(!HasLeaf(index));
@@ -63,11 +68,6 @@ class InlinedHashTableBucketMetadata {
   int GetOrigin() const {
     if (origin_ == 0) return -1;
     return origin_ - 1;
-  }
-
-  InlinedHashTableBucketMetadata() {
-    mask_ = 0;
-    origin_ = 0;
   }
 
   void ClearAll() {

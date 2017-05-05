@@ -23,11 +23,13 @@ void InlinedHashTable<Bucket, Key, Value, NumInlinedBuckets, Options, GetKey,
   const Array& array = array_;
   for (IndexType bi = 0; bi < array.capacity; ++bi) {
     const Bucket& bucket = GetBucket(array, bi);
-    for (int li = 0; li < MaxHopDistance(); ++li) {
-      if (bucket.md.HasLeaf(li)) {
-        const Bucket& leaf = GetBucket(array, (bi + li) & (array.capacity - 1));
-        ASSERT_EQ(leaf.md.GetOrigin(), li);
-      }
+
+    BucketMetadata::LeafIterator it(&bucket.md);
+    int distance;
+    while ((distance = it.Next()) >= 0) {
+      const Bucket& leaf =
+          GetBucket(array, (bi + distance) & (array.capacity - 1));
+      ASSERT_EQ(leaf.md.GetOrigin(), distance);
     }
     int o = bucket.md.GetOrigin();
     if (o >= 0) {
@@ -238,17 +240,48 @@ TEST(InlinedHashSet, Random) {
   }
 }
 
-TEST(InlinedHashSet, Simple) {
-  Set t;
-  EXPECT_TRUE(t.empty());
-  EXPECT_TRUE(t.insert("hello").second);
-  EXPECT_FALSE(t.empty());
-  EXPECT_EQ(1, t.size());
-  auto it = t.begin();
-  EXPECT_EQ("hello", *it);
-  ++it;
-  EXPECT_TRUE(it == t.end());
-  t.CheckConsistency();
+TEST(InlinedHashSet, ManyInserts) {
+  InlinedHashMap<unsigned, unsigned, 8> t;
+  {
+    std::mt19937 rand(0);
+    for (int i = 0; i < 10000; ++i) {
+      unsigned r = rand();
+      if (i == 368 || r == 3598945970) {
+        std::cout << i << ": insert " << r << "\n";
+      }
+      t[r] = r + 1;
+      t.CheckConsistency();
+    }
+  }
+  {
+    std::mt19937 rand(0);
+    for (int i = 0; i < 10000; ++i) {
+      unsigned r = rand();
+      if (r == 3598945970) {
+        std::cout << i << ": lookup " << r << "\n";
+      }
+      ASSERT_EQ(r + 1, t[r]) << i;
+    }
+  }
+}
+
+TEST(LeafIterator, Basic) {
+  InlinedHashTableBucketMetadata md;
+  md.SetLeaf(0);
+  md.SetLeaf(1);
+  md.SetLeaf(5);
+  md.SetLeaf(8);
+  md.SetLeaf(9);
+  md.SetLeaf(21);
+
+  InlinedHashTableBucketMetadata::LeafIterator it(&md);
+  ASSERT_EQ(it.Next(), 0);
+  ASSERT_EQ(it.Next(), 1);
+  ASSERT_EQ(it.Next(), 5);
+  ASSERT_EQ(it.Next(), 8);
+  ASSERT_EQ(it.Next(), 9);
+  ASSERT_EQ(it.Next(), 21);
+  ASSERT_EQ(it.Next(), -1);
 }
 
 const int kBenchmarkIters = 10000;
@@ -318,7 +351,17 @@ BENCHMARK(BM_Lookup_UnorderedMap);
 
 int main(int argc, char** argv) {
   ::testing::InitGoogleTest(&argc, argv);
-  ::benchmark::Initialize(&argc, argv);
-  ::benchmark::RunSpecifiedBenchmarks();
+  bool run_benchmark = false;
+  for (int i = 1; i < argc; ++i) {
+    if (strncmp(argv[i], "--benchmark", 11) == 0) {
+      run_benchmark = true;
+      break;
+    }
+  }
+  if (run_benchmark) {
+    ::benchmark::Initialize(&argc, argv);
+    ::benchmark::RunSpecifiedBenchmarks();
+    return 0;
+  }
   return RUN_ALL_TESTS();
 }

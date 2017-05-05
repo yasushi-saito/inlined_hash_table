@@ -47,7 +47,25 @@ class InlinedHashTableBucketMetadata {
     origin_ = 0;
   }
 
-  bool HasAnyLeaf() const { return mask_ != 0; }
+  class LeafIterator {
+   public:
+    explicit LeafIterator(const InlinedHashTableBucketMetadata* md)
+        : mask_(md->mask_), base_(-1) {}
+    int Next() {
+      int i = __builtin_ffs(mask_);
+      if (i == 0) return -1;
+
+      mask_ >>= i;
+      base_ += i;
+      return base_;
+    }
+
+   private:
+    unsigned mask_;
+    int base_;
+  };
+
+  // bool HasAnyLeaf() const { return mask_ != 0; }
   bool HasLeaf(int index) const { return (mask_ & (1U << index)) != 0; }
   void SetLeaf(int index) {
     assert(!HasLeaf(index));
@@ -294,17 +312,16 @@ class InlinedHashTable {
 
   enum InsertResult { KEY_FOUND, EMPTY_SLOT_FOUND, ARRAY_FULL };
   InsertResult Insert(const Key& key, IndexType* index) {
-    InsertResult result = InsertInArray(&array_, key, index);
-    if (result == KEY_FOUND) return result;
-    if (result != ARRAY_FULL) {
-      ++array_.size;
-      return result;
+    for (int iter = 0; iter < 4; ++iter) {
+      InsertResult result = InsertInArray(&array_, key, index);
+      if (result == KEY_FOUND) return result;
+      if (result != ARRAY_FULL) {
+        ++array_.size;
+        return result;
+      }
+      ExpandTable(1);
     }
-    ExpandTable(1);
-    result = InsertInArray(&array_, key, index);
-    assert(result == EMPTY_SLOT_FOUND);
-    ++array_.size;
-    return result;
+    abort();
   }
 
   // For unittests only
@@ -420,11 +437,11 @@ class InlinedHashTable {
 
     const IndexType start_index = ComputeHash(k) & (array.capacity - 1);
     *index = start_index;
-    const BucketMetadata& hop_info = GetBucket(array, start_index).md;
-    for (int i = 0; i < std::min<int>(MaxHopDistance(), array.capacity); ++i) {
-      if (!hop_info.HasLeaf(i)) continue;
-
-      *index = (start_index + i) & (array.capacity - 1);
+    const BucketMetadata& md = GetBucket(array, start_index).md;
+    BucketMetadata::LeafIterator it(&md);
+    int distance;
+    while ((distance = it.Next()) >= 0) {
+      *index = (start_index + distance) & (array.capacity - 1);
       const Bucket& elem = GetBucket(array, *index);
       const Key& key = ExtractKey(elem.value);
       if (KeysEqual(key, k)) {
@@ -458,7 +475,7 @@ class InlinedHashTable {
       if (origin_bucket->md.HasLeaf(i)) {
         Bucket* elem = MutableBucket(array, index);
         if (KeysEqual(ExtractKey(elem->value), k)) {
-          *index_found = origin_index;
+          *index_found = index;
           return KEY_FOUND;
         }
       }
@@ -519,7 +536,7 @@ class InlinedHashTable {
   // current table. It's used to compute the capacity of the new table.  Culls
   // tombstones and move all the existing elements and
   void ExpandTable(IndexType delta) {
-    const IndexType new_capacity = ComputeCapacity(array_.size + delta);
+    const IndexType new_capacity = ComputeCapacity(array_.capacity + delta);
     Array new_array(new_capacity);
     for (IndexType i = 0; i < array_.capacity; ++i) {
       Bucket* old_bucket = MutableBucket(&array_, i);

@@ -312,6 +312,9 @@ class InlinedHashTable {
 
   enum InsertResult { KEY_FOUND, EMPTY_SLOT_FOUND, ARRAY_FULL };
   InsertResult Insert(const Key& key, IndexType* index) {
+    if (FindInArray(array_, key, index)) {
+      return KEY_FOUND;
+    }
     for (int iter = 0; iter < 4; ++iter) {
       InsertResult result = InsertInArray(&array_, key, index);
       if (result == KEY_FOUND) return result;
@@ -459,40 +462,31 @@ class InlinedHashTable {
   InsertResult InsertInArray(Array* array, const Key& k,
                              IndexType* index_found) {
     if (__builtin_expect(array->capacity == 0, 0)) return ARRAY_FULL;
-    const size_t hash = ComputeHash(k);
-    const IndexType origin_index = hash & (array->capacity - 1);
+    const IndexType origin_index = ComputeHash(k) & (array->capacity - 1);
     Bucket* origin_bucket = MutableBucket(array, origin_index);
     IndexType free_index = kEnd;
     for (int i = 0; i < std::min<IndexType>(MaxAddDistance(), array->capacity);
          ++i) {
-      const IndexType index = (hash + i) & (array->capacity - 1);
-      if (free_index == kEnd) {
-        Bucket* elem = MutableBucket(array, index);
-        if (!elem->md.IsOccupied()) {
-          free_index = index;
-        }
-      }
-      if (origin_bucket->md.HasLeaf(i)) {
-        Bucket* elem = MutableBucket(array, index);
-        if (KeysEqual(ExtractKey(elem->value), k)) {
-          *index_found = index;
-          return KEY_FOUND;
-        }
+      const IndexType index = (origin_index + i) & (array->capacity - 1);
+      Bucket* elem = MutableBucket(array, index);
+      if (!elem->md.IsOccupied()) {
+        free_index = index;
+        break;
       }
     }
-    if (free_index != kEnd) {
-      do {
-        int free_distance = Distance(*array, origin_index, free_index);
-        if (free_distance < MaxHopDistance()) {
-          Bucket* free_bucket = MutableBucket(array, free_index);
-          origin_bucket->md.SetLeaf(free_distance);
-          free_bucket->md.SetOrigin(free_distance);
-          *index_found = free_index;
-          return EMPTY_SLOT_FOUND;
-        }
-        free_index = FindCloserFreeBucket(array, free_index);
-      } while (free_index != kEnd);
-    }
+    if (free_index == kEnd) return ARRAY_FULL;
+
+    do {
+      int free_distance = Distance(*array, origin_index, free_index);
+      if (free_distance < MaxHopDistance()) {
+        Bucket* free_bucket = MutableBucket(array, free_index);
+        origin_bucket->md.SetLeaf(free_distance);
+        free_bucket->md.SetOrigin(free_distance);
+        *index_found = free_index;
+        return EMPTY_SLOT_FOUND;
+      }
+      free_index = FindCloserFreeBucket(array, free_index);
+    } while (free_index != kEnd);
     return ARRAY_FULL;
   }
 

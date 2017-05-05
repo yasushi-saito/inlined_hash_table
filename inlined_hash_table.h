@@ -47,6 +47,7 @@ class InlinedHashTableBucketMetadata {
     origin_ = 0;
   }
 
+  bool HasAnyLeaf() const { return mask_ != 0; }
   bool HasLeaf(int index) const { return (mask_ & (1U << index)) != 0; }
   void SetLeaf(int index) {
     assert(!HasLeaf(index));
@@ -306,6 +307,9 @@ class InlinedHashTable {
     return result;
   }
 
+  // For unittests only
+  void CheckConsistency();
+
  private:
   static constexpr IndexType kEnd = std::numeric_limits<IndexType>::max();
 
@@ -430,8 +434,8 @@ class InlinedHashTable {
     return false;
   }
 
-  static constexpr int MaxHopDistance() { return 32; }
-  static constexpr int MaxAddDistance() { return 32; }
+  static constexpr int MaxHopDistance() { return 27; }
+  static constexpr int MaxAddDistance() { return 27; }
 
   // Either find "k" in the array, or find a slot into which "k" can be
   // inserted.
@@ -523,7 +527,8 @@ class InlinedHashTable {
       const Key& key = ExtractKey(old_bucket->value);
 
       IndexType new_i;
-      assert(InsertInArray(&new_array, key, &new_i) == EMPTY_SLOT_FOUND);
+      InsertResult result = InsertInArray(&new_array, key, &new_i);
+      assert(result == EMPTY_SLOT_FOUND);
       MutableBucket(&new_array, new_i)->value = std::move(old_bucket->value);
     }
     new_array.size = array_.size;
@@ -613,6 +618,9 @@ class InlinedHashMap {
   // Non-standard methods, mainly for testing.
   size_t capacity() const { return impl_.capacity(); }
 
+  // For unittests only
+  void CheckConsistency() { impl_.CheckConsistency(); }
+
  private:
   Table impl_;
 };
@@ -664,6 +672,9 @@ class InlinedHashSet {
 
   // Non-standard methods, mainly for testing.
   size_t capacity() const { return impl_.capacity(); }
+
+  // For unittests only
+  void CheckConsistency() { impl_.CheckConsistency(); }
 
  private:
   Table impl_;

@@ -14,6 +14,29 @@
 using Map = InlinedHashMap<std::string, std::string, 8>;
 using Set = InlinedHashSet<std::string, 8>;
 
+template <typename Bucket, typename Key, typename Value, int NumInlinedBuckets,
+          typename Options, typename GetKey, typename Hash, typename EqualTo,
+          typename IndexType>
+
+void InlinedHashTable<Bucket, Key, Value, NumInlinedBuckets, Options, GetKey,
+                      Hash, EqualTo, IndexType>::CheckConsistency() {
+  const Array& array = array_;
+  for (IndexType bi = 0; bi < array.capacity; ++bi) {
+    const Bucket& bucket = GetBucket(array, bi);
+    for (int li = 0; li < MaxHopDistance(); ++li) {
+      if (bucket.md.HasLeaf(li)) {
+        const Bucket& leaf = GetBucket(array, (bi + li) & (array.capacity - 1));
+        ASSERT_EQ(leaf.md.GetOrigin(), li);
+      }
+    }
+    int o = bucket.md.GetOrigin();
+    if (o >= 0) {
+      const Bucket& origin = GetBucket(array, (bi - o) & (array.capacity - 1));
+      ASSERT_TRUE(origin.md.HasLeaf(o));
+    }
+  }
+}
+
 TEST(InlinedHashMap, Simple) {
   Map t;
   EXPECT_EQ(8, t.capacity());
@@ -21,6 +44,7 @@ TEST(InlinedHashMap, Simple) {
   EXPECT_TRUE(t.insert(std::make_pair("hello", "world")).second);
   EXPECT_FALSE(t.empty());
   EXPECT_EQ(1, t.size());
+  t.CheckConsistency();
   auto it = t.begin();
   EXPECT_EQ("hello", (*it).first);
   EXPECT_EQ("world", (*it).second);
@@ -29,6 +53,7 @@ TEST(InlinedHashMap, Simple) {
   EXPECT_EQ("world", t["hello"]);
 
   t.erase("hello");
+  t.CheckConsistency();
   EXPECT_TRUE(t.empty());
   EXPECT_TRUE(t.find("hello") == t.end());
 }
@@ -42,6 +67,7 @@ TEST(InlinedHashMap, EmptyInlinedPart) {
   EXPECT_EQ("v", (*it).second);
   ++it;
   EXPECT_TRUE(it == t.end());
+  t.CheckConsistency();
 }
 
 TEST(InlinedHashMap, Clear) {
@@ -53,21 +79,25 @@ TEST(InlinedHashMap, Clear) {
   EXPECT_EQ(0, t.size());
   EXPECT_TRUE(t.find("h0") == t.end());
   EXPECT_TRUE(t.find("h1") == t.end());
+  t.CheckConsistency();
 }
 
 TEST(InlinedHashMap, Capacity0) {
   Map t(0);
   EXPECT_EQ(8, t.capacity());
+  t.CheckConsistency();
 }
 
 TEST(InlinedHashMap, Capacity5) {
   Map t(5);
   EXPECT_EQ(8, t.capacity());
+  t.CheckConsistency();
 }
 
 TEST(InlinedHashMap, Capacity8) {
   Map t(8);  // MaxLoadFactor will bump the capacity to 16
   EXPECT_EQ(16, t.capacity());
+  t.CheckConsistency();
 
   {
     class StrTableOptions {
@@ -76,6 +106,7 @@ TEST(InlinedHashMap, Capacity8) {
     };
     InlinedHashMap<std::string, std::string, 8, StrTableOptions> t2(8);
     EXPECT_EQ(8, t2.capacity());
+    t.CheckConsistency();
   }
 }
 
@@ -115,6 +146,8 @@ TEST(InlinedHashMap, Copy) {
   EXPECT_EQ(1, t.size());
   EXPECT_EQ(t2["h0"], "w0");
   EXPECT_EQ(t["h0"], "w0");
+  t.CheckConsistency();
+  t2.CheckConsistency();
 }
 
 TEST(InlinedHashMap, Move) {
@@ -126,6 +159,8 @@ TEST(InlinedHashMap, Move) {
   EXPECT_EQ(t2["h0"], "w0");
   EXPECT_TRUE(t.empty());
   EXPECT_TRUE(t.find("h0") == t.end());
+  t.CheckConsistency();
+  t2.CheckConsistency();
 }
 
 // Set the max load factor to 1.
@@ -198,7 +233,8 @@ TEST(InlinedHashSet, Random) {
     ASSERT_EQ(t.empty(), model.empty());
     std::set<int> elems_in_t(t.begin(), t.end());
     std::set<int> elems_in_model(model.begin(), model.end());
-    ASSERT_EQ(elems_in_t, elems_in_model);
+    ASSERT_EQ(elems_in_t, elems_in_model) << i;
+    t.CheckConsistency();
   }
 }
 
@@ -212,6 +248,7 @@ TEST(InlinedHashSet, Simple) {
   EXPECT_EQ("hello", *it);
   ++it;
   EXPECT_TRUE(it == t.end());
+  t.CheckConsistency();
 }
 
 const int kBenchmarkIters = 10000;
@@ -281,7 +318,7 @@ BENCHMARK(BM_Lookup_UnorderedMap);
 
 int main(int argc, char** argv) {
   ::testing::InitGoogleTest(&argc, argv);
-  //::benchmark::Initialize(&argc, argv);
-  //::benchmark::RunSpecifiedBenchmarks();
+  ::benchmark::Initialize(&argc, argv);
+  ::benchmark::RunSpecifiedBenchmarks();
   return RUN_ALL_TESTS();
 }

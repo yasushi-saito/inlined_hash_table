@@ -14,12 +14,10 @@
 using Map = InlinedHashMap<std::string, std::string, 8>;
 using Set = InlinedHashSet<std::string, 8>;
 
-template <typename Bucket, typename Key, typename Value, int NumInlinedBuckets,
-          typename Options, typename GetKey, typename Hash, typename EqualTo,
-          typename IndexType>
-
-void InlinedHashTable<Bucket, Key, Value, NumInlinedBuckets, Options, GetKey,
-                      Hash, EqualTo, IndexType>::CheckConsistency() {
+template <typename Key, typename Value, int NumInlinedBuckets, typename Options,
+          typename GetKey, typename Hash, typename EqualTo, typename IndexType>
+void InlinedHashTable<Key, Value, NumInlinedBuckets, Options, GetKey, Hash,
+                      EqualTo, IndexType>::CheckConsistency() {
   const Array& array = array_;
   for (IndexType bi = 0; bi < array.capacity; ++bi) {
     const Bucket& bucket = GetBucket(array, bi);

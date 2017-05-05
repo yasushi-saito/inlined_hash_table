@@ -36,6 +36,10 @@
 //
 // TODO: implement bucket reservation.
 
+struct DefaultInlinedHashTableOptions {
+  static constexpr double MaxLoadFactor() { return 0.75; }
+};
+
 class InlinedHashTableBucketMetadata {
  public:
   bool HasLeaf(int index) const { return (mask_ & (1U << index)) != 0; }
@@ -70,6 +74,7 @@ class InlinedHashTableBucketMetadata {
     mask_ = 0;
     origin_ = 0;
   }
+
  private:
   unsigned mask_ : 27;
   unsigned origin_ : 5;
@@ -365,7 +370,7 @@ class InlinedHashTable {
   }
 
   IndexType ComputeCapacity(IndexType desired) {
-    desired /= MaxLoadFactor();
+    desired /= options_.MaxLoadFactor();
     if (desired < NumInlinedBuckets) desired = NumInlinedBuckets;
     if (desired <= 0) return desired;
     return static_cast<IndexType>(1)
@@ -430,7 +435,8 @@ class InlinedHashTable {
 
   // Either find "k" in the array, or find a slot into which "k" can be
   // inserted.
-  InsertResult InsertInArray(Array* array, const Key& k, IndexType* index_found) {
+  InsertResult InsertInArray(Array* array, const Key& k,
+                             IndexType* index_found) {
     if (__builtin_expect(array->capacity == 0, 0)) return ARRAY_FULL;
     const size_t hash = ComputeHash(k);
     const IndexType origin_index = hash & (array->capacity - 1);
@@ -542,30 +548,6 @@ class InlinedHashTable {
     return KeysEqual(options_.EmptyKey(), k);
   }
 
-  template <typename TOptions>
-  static auto SfinaeIsDeletedKey(const Key* k, const TOptions* options,
-                                 const EqualTo* equal_to)
-      -> decltype((*equal_to)(options->DeletedKey(), *k)) {
-    return (*equal_to)(options->DeletedKey(), *k);
-  }
-
-  static auto SfinaeIsDeletedKey(...) -> bool { return false; }
-
-  template <typename TOptions>
-  static auto SfinaeMaxLoadFactor(const TOptions* options)
-      -> decltype(options->MaxLoadFactor()) {
-    return options->MaxLoadFactor();
-  }
-
-  static auto SfinaeMaxLoadFactor(...) -> double { return 0.75; }
-
-  bool IsDeletedKey(const Key& k) const {
-    // return KeysEqual(options_.DeletedKey(), k);
-    return SfinaeIsDeletedKey(&k, &options_, &equal_to_);
-  }
-
-  double MaxLoadFactor() const { return SfinaeMaxLoadFactor(&options_); }
-
   Options options_;
   GetKey get_key_;
   Hash hash_;
@@ -573,7 +555,8 @@ class InlinedHashTable {
   Array array_;
 };
 
-template <typename Key, typename Value, int NumInlinedBuckets, typename Options,
+template <typename Key, typename Value, int NumInlinedBuckets,
+          typename Options = DefaultInlinedHashTableOptions,
           typename Hash = std::hash<Key>, typename EqualTo = std::equal_to<Key>,
           typename IndexType = size_t>
 class InlinedHashMap {
@@ -634,7 +617,8 @@ class InlinedHashMap {
   Table impl_;
 };
 
-template <typename Value, int NumInlinedBuckets, typename Options,
+template <typename Value, int NumInlinedBuckets,
+          typename Options = DefaultInlinedHashTableOptions,
           typename Hash = std::hash<Value>,
           typename EqualTo = std::equal_to<Value>, typename IndexType = size_t>
 class InlinedHashSet {

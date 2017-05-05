@@ -11,24 +11,8 @@
 #include "benchmark/benchmark.h"
 #include "inlined_hash_table.h"
 
-class StrTableOptions {
- public:
-  const std::string& EmptyKey() const { return empty_key_; };
-  const std::string& DeletedKey() const { return deleted_key_; }
-
- private:
-  std::string empty_key_;
-  std::string deleted_key_ = "xxx";
-};
-
-class IntTableOptions {
- public:
-  int EmptyKey() const { return -1; }
-  int DeletedKey() const { return -2; }
-};
-
-using Map = InlinedHashMap<std::string, std::string, 8, StrTableOptions>;
-using Set = InlinedHashSet<std::string, 8, StrTableOptions>;
+using Map = InlinedHashMap<std::string, std::string, 8>;
+using Set = InlinedHashSet<std::string, 8>;
 
 TEST(InlinedHashMap, Simple) {
   Map t;
@@ -50,7 +34,7 @@ TEST(InlinedHashMap, Simple) {
 }
 
 TEST(InlinedHashMap, EmptyInlinedPart) {
-  InlinedHashMap<std::string, std::string, 0, StrTableOptions> t;
+  InlinedHashMap<std::string, std::string, 0> t;
   EXPECT_EQ(0, t.capacity());
   t["k"] = "v";
   auto it = t.begin();
@@ -86,11 +70,11 @@ TEST(InlinedHashMap, Capacity8) {
   EXPECT_EQ(16, t.capacity());
 
   {
-    class StrTableOptions2 : public StrTableOptions {
+    class StrTableOptions {
      public:
       double MaxLoadFactor() const { return 1; }
     };
-    InlinedHashMap<std::string, std::string, 8, StrTableOptions2> t2(8);
+    InlinedHashMap<std::string, std::string, 8, StrTableOptions> t2(8);
     EXPECT_EQ(8, t2.capacity());
   }
 }
@@ -144,25 +128,6 @@ TEST(InlinedHashMap, Move) {
   EXPECT_TRUE(t.find("h0") == t.end());
 }
 
-TEST(InlinedHashMap, OptionsWithoutDeletedKeyWorks) {
-  class StrTableOptionsWithoutDeletion {
-   public:
-    const std::string& EmptyKey() const { return empty_key_; };
-
-   private:
-    std::string empty_key_;
-    std::string deleted_key_ = "xxx";
-  };
-  InlinedHashMap<std::string, std::string, 8, StrTableOptionsWithoutDeletion> t;
-
-  EXPECT_TRUE(t.empty());
-  EXPECT_TRUE(t.insert(std::make_pair("hello", "world")).second);
-  EXPECT_EQ("world", t["hello"]);
-  EXPECT_FALSE(t.empty());
-  t.clear();
-  EXPECT_TRUE(t.empty());
-}
-
 // Set the max load factor to 1.
 TEST(InlinedHashMap, OverrideMaxLoadFactor_1) {
   class Options {
@@ -208,7 +173,7 @@ TEST(InlinedHashMap, OverrideMaxLoadFactor_0_5) {
 }
 
 TEST(InlinedHashSet, Random) {
-  InlinedHashSet<int, 8, IntTableOptions> t;
+  InlinedHashSet<int, 8> t;
   std::unordered_set<int> model;
 
   std::mt19937 rand(0);
@@ -274,7 +239,7 @@ void DoInsertTest(benchmark::State& state, Map* map) {
 }
 
 void BM_Insert_InlinedMap(benchmark::State& state) {
-  InlinedHashMap<unsigned, unsigned, 8, IntTableOptions> map;
+  InlinedHashMap<unsigned, unsigned, 8> map;
   DoInsertTest(state, &map);
 }
 BENCHMARK(BM_Insert_InlinedMap);
@@ -301,7 +266,7 @@ void DoLookupTest(benchmark::State& state, Map* map) {
 }
 
 void BM_Lookup_InlinedMap(benchmark::State& state) {
-  InlinedHashMap<unsigned, unsigned, 8, IntTableOptions> map;
+  InlinedHashMap<unsigned, unsigned, 8> map;
   DoLookupTest(state, &map);
 }
 

@@ -13,8 +13,8 @@ You need a C++-11 compiler. I tested using gcc-4.8/libstdc++ and clang-4.0/libc+
 
 ## Installation
 
-The library consists of a single header file with no extra dependencies. Just
-copy it to where you want.
+The library consists of a single header file with no extra dependency. Just copy
+it to where you want.
 
 The cmakefiles are for unittests, and you can ignore them.
 
@@ -39,8 +39,17 @@ void Test() {
 }
 ```
 
-InlinedHashMap must be given an Option template type. The Option type must define two methods,
-`EmptyKey` and `DeletedKey`.
+The above example creates a intger→integer hash map. It uses -1 as an empty key,
+and -2 as the deleted key (tombstones). That is, all empty buckets in the hash
+map are filled with -1.
+
+After erasing an existing element, the bucket is set to -2. You cannot use -1 or
+-2 as a valid key. `EmptyKey()` is needed only when `InlineHashTable::erase()`
+is going to be used.
+
+The third parameter, `8`, defines the number of elements stored in-line with the
+hash map. That is, up to 8 elements can be stored in the hash table without
+`malloc`. It is allowed to set this parameter to 0.
 
 
 ## Performance

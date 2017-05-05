@@ -32,6 +32,7 @@ using Set = InlinedHashSet<std::string, 8, StrTableOptions>;
 
 TEST(InlinedHashMap, Simple) {
   Map t;
+  EXPECT_EQ(8, t.capacity());
   EXPECT_TRUE(t.empty());
   EXPECT_TRUE(t.insert(std::make_pair("hello", "world")).second);
   EXPECT_FALSE(t.empty());
@@ -50,6 +51,7 @@ TEST(InlinedHashMap, Simple) {
 
 TEST(InlinedHashMap, EmptyInlinedPart) {
   InlinedHashMap<std::string, std::string, 0, StrTableOptions> t;
+  EXPECT_EQ(0, t.capacity());
   t["k"] = "v";
   auto it = t.begin();
   EXPECT_EQ("k", (*it).first);
@@ -210,15 +212,15 @@ TEST(InlinedHashSet, Random) {
   std::unordered_set<int> model;
 
   std::mt19937 rand(0);
-  for (int i = 0; i < 10000; ++i) {
+  for (int i = 0; i < 100000; ++i) {
     int op = rand() % 100;
     if (op < 50) {
       int n = rand() % 100;
-      // std::cout << i << "Insert " << n << "\n";
+      // std::cout << i << ": Insert " << n << "\n";
       ASSERT_EQ(t.insert(n).second, model.insert(n).second);
     } else if (op < 70) {
       int n = rand() % 100;
-      // std::cout << i << "Erase " << n << "\n";
+      // std::cout << i << ": Erase " << n << "\n";
       ASSERT_EQ(t.erase(n), model.erase(n));
     } else if (op < 99) {
       int n = rand() % 100;
@@ -314,7 +316,7 @@ BENCHMARK(BM_Lookup_UnorderedMap);
 
 int main(int argc, char** argv) {
   ::testing::InitGoogleTest(&argc, argv);
-  ::benchmark::Initialize(&argc, argv);
-  ::benchmark::RunSpecifiedBenchmarks();
+  //::benchmark::Initialize(&argc, argv);
+  //::benchmark::RunSpecifiedBenchmarks();
   return RUN_ALL_TESTS();
 }

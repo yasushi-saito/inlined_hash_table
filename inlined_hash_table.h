@@ -3,8 +3,9 @@
 #pragma once
 
 #include <array>
-#include <cmath>
 #include <cassert>
+#include <cmath>
+#include <cstdint>
 #include <functional>
 #include <limits>
 #include <memory>
@@ -13,7 +14,7 @@
 // InlinedHashTable is an implementation detail that underlies InlinedHashMap
 // and InlinedHashSet. It's not for public use.
 //
-// NumInlinedElements is the number of elements stored in-line with the table.
+// NumInlinedBuckets is the number of elements stored in-line with the table.
 //
 // Options is a class that defines one required method, and two optional
 // methods.
@@ -33,28 +34,66 @@
 // Returning a compile-time constant allows the compiler to optimize the code
 // well.
 //
-// TODO: allow NumInlinedElements to be zero.
 // TODO: implement bucket reservation.
 
-template <typename Key, typename Elem, int NumInlinedElements, typename Options,
-          typename GetKey, typename Hash, typename EqualTo, typename IndexType>
+class InlinedHashTableBucketMetadata {
+ public:
+  bool HasLeaf(int index) const { return (mask_ & (1U << index)) != 0; }
+  void SetLeaf(int index) {
+    assert(!HasLeaf(index));
+    mask_ |= (1U << index);
+  }
+
+  void ClearLeaf(int index) {
+    assert(HasLeaf(index));
+    mask_ &= ~(1U << index);
+  }
+
+  bool IsOccupied() const { return origin_ != 0; }
+  void SetOrigin(int delta_from_origin) {
+    assert(delta_from_origin < 32);
+    origin_ = delta_from_origin + 1;
+  }
+  void ClearOrigin() { origin_ = 0; }
+
+  int GetOrigin() const {
+    if (origin_ == 0) return -1;
+    return origin_ - 1;
+  }
+
+  InlinedHashTableBucketMetadata() {
+    mask_ = 0;
+    origin_ = 0;
+  }
+
+  void ClearAll() {
+    mask_ = 0;
+    origin_ = 0;
+  }
+ private:
+  unsigned mask_ : 27;
+  unsigned origin_ : 5;
+};
+
+template <typename Bucket, typename Key, typename Value, int NumInlinedBuckets,
+          typename Options, typename GetKey, typename Hash, typename EqualTo,
+          typename IndexType>
 class InlinedHashTable {
  public:
-  static_assert((NumInlinedElements & (NumInlinedElements - 1)) == 0,
-                "NumInlinedElements must be a power of two");
+  using BucketMetadata = InlinedHashTableBucketMetadata;
+  static_assert((NumInlinedBuckets & (NumInlinedBuckets - 1)) == 0,
+                "NumInlinedBuckets must be a power of two");
   InlinedHashTable(IndexType bucket_count, const Options& options,
                    const Hash& hash, const EqualTo& equal_to)
       : options_(options),
         hash_(hash),
         equal_to_(equal_to),
-        array_(ComputeCapacity(bucket_count)) {
-    InitArray(options_.EmptyKey(), &array_);
-  }
+        array_(ComputeCapacity(bucket_count)) {}
 
-  InlinedHashTable(const InlinedHashTable& other) : array_(NumInlinedElements) {
+  InlinedHashTable(const InlinedHashTable& other) : array_(NumInlinedBuckets) {
     *this = other;
   }
-  InlinedHashTable(InlinedHashTable&& other) : array_(NumInlinedElements) {
+  InlinedHashTable(InlinedHashTable&& other) : array_(NumInlinedBuckets) {
     *this = std::move(other);
   }
 
@@ -77,8 +116,8 @@ class InlinedHashTable {
 
   class iterator {
    public:
-    using Table = InlinedHashTable<Key, Elem, NumInlinedElements, Options,
-                                   GetKey, Hash, EqualTo, IndexType>;
+    using Table = InlinedHashTable<Bucket, Key, Value, NumInlinedBuckets,
+                                   Options, GetKey, Hash, EqualTo, IndexType>;
     iterator(Table* table, IndexType index) : table_(table), index_(index) {}
     iterator(const typename Table::iterator& i)
         : table_(i.table_), index_(i.index_) {}
@@ -89,8 +128,8 @@ class InlinedHashTable {
       return index_ != other.index_;
     }
 
-    Elem& operator*() const { return *table_->Mutable(index_); }
-    Elem* operator->() const { return table_->Mutable(index_); }
+    Value& operator*() const { return table_->Mutable(index_)->value; }
+    Value* operator->() const { return &table_->Mutable(index_)->value; }
 
     iterator operator++() {  // ++it
       index_ = table_->NextValidElementInArray(table_->array_, index_ + 1);
@@ -111,8 +150,8 @@ class InlinedHashTable {
 
   class const_iterator {
    public:
-    using Table = InlinedHashTable<Key, Elem, NumInlinedElements, Options,
-                                   GetKey, Hash, EqualTo, IndexType>;
+    using Table = InlinedHashTable<Bucket, Key, Value, NumInlinedBuckets,
+                                   Options, GetKey, Hash, EqualTo, IndexType>;
     const_iterator() {}
     const_iterator(const Table::iterator& i)
         : table_(i.table_), index_(i.index_) {}
@@ -127,8 +166,8 @@ class InlinedHashTable {
       return index_ != other.index_;
     }
 
-    const Elem& operator*() const { return table_->Get(index_); }
-    const Elem* operator->() const { return &table_->Get(index_); }
+    const Value& operator*() const { return table_->Get(index_).value; }
+    const Value* operator->() const { return &table_->Get(index_).value; }
 
     const_iterator operator++() {  // ++it
       index_ = table_->NextValidElementInArray(table_->array_, index_ + 1);
@@ -182,12 +221,14 @@ class InlinedHashTable {
   }
 
   void clear() {
-    for (Elem& elem : array_.inlined) {
-      *ExtractMutableKey(&elem) = options_.EmptyKey();
+    for (Bucket& elem : array_.inlined) {
+      elem.md.ClearAll();
+      elem.value = Value();
     }
     if (array_.outlined != nullptr) {
       for (size_t i = 0; i < array_.capacity - array_.inlined.size(); ++i) {
-        *ExtractMutableKey(&array_.outlined[i]) = options_.EmptyKey();
+        array_.outlined[i].md.ClearAll();
+        array_.outlined[i].value = Value();
       }
     }
     array_.size = 0;
@@ -196,11 +237,17 @@ class InlinedHashTable {
 
   // Erases the element pointed to by "i". Returns the iterator to the next
   // valid element.
-  iterator erase(iterator i) {
-    Elem& elem = *i;
-    *ExtractMutableKey(&elem) = options_.DeletedKey();
+  iterator erase(iterator itr) {
+    assert(itr.table_ == this);
+    Bucket* bucket = MutableBucket(&array_, itr.index_);
+    assert(bucket->md.IsOccupied());
+    const int delta = bucket->md.GetOrigin();
+    Bucket* origin = Mutable((itr.index_ - delta) % (array_.capacity - 1));
+    origin->md.ClearLeaf(delta);
+    bucket->md.ClearOrigin();
+    bucket->value = Value();
     --array_.size;
-    return iterator(this, NextValidElementInArray(array_, i.index_ + 1));
+    return iterator(this, NextValidElementInArray(array_, itr.index_ + 1));
   }
 
   // If "k" exists in the table, erase it and return 1. Else return 0.
@@ -211,23 +258,23 @@ class InlinedHashTable {
     return 1;
   }
 
-  std::pair<iterator, bool> insert(Elem&& value) {
+  std::pair<iterator, bool> insert(Value&& value) {
     IndexType index;
     InsertResult result = Insert(ExtractKey(value), &index);
     if (result == KEY_FOUND) {
       return std::make_pair(iterator(this, index), false);
     }
-    *MutableArraySlot(&array_, index) = std::move(value);
+    MutableBucket(&array_, index)->value = std::move(value);
     return std::make_pair(iterator(this, index), true);
   }
 
-  std::pair<iterator, bool> insert(const Elem& value) {
+  std::pair<iterator, bool> insert(const Value& value) {
     IndexType index;
     InsertResult result = Insert(ExtractKey(value), &index);
     if (result == KEY_FOUND) {
       return std::make_pair(iterator(this, index), false);
     }
-    *MutableArraySlot(&array_, index) = value;
+    MutableBucket(&array_, index)->value = value;
     return std::make_pair(iterator(this, index), true);
   }
 
@@ -236,8 +283,8 @@ class InlinedHashTable {
   IndexType capacity() const { return array_.capacity; }
 
   // Backdoor methods used by map operator[].
-  Elem* Mutable(IndexType index) { return MutableArraySlot(&array_, index); }
-  const Elem& Get(IndexType index) const { return ArraySlot(array_, index); }
+  Bucket* Mutable(IndexType index) { return MutableBucket(&array_, index); }
+  const Bucket& Get(IndexType index) const { return GetBucket(array_, index); }
 
   enum InsertResult { KEY_FOUND, EMPTY_SLOT_FOUND, ARRAY_FULL };
   InsertResult Insert(const Key& key, IndexType* index) {
@@ -264,7 +311,7 @@ class InlinedHashTable {
         : size(0), capacity(capacity_arg), num_empty_slots(capacity) {
       assert((capacity & (capacity - 1)) == 0);
       if (capacity > inlined.size()) {
-        outlined.reset(new Elem[capacity - inlined.size()]);
+        outlined.reset(new Bucket[capacity - inlined.size()]);
       }
     }
 
@@ -279,7 +326,7 @@ class InlinedHashTable {
       inlined = other.inlined;
       if (other.outlined != nullptr) {
         const size_t n = other.capacity - inlined.size();
-        outlined.reset(new Elem[n]);
+        outlined.reset(new Bucket[n]);
         std::copy(&other.outlined[0], &other.outlined[n], &outlined[0]);
       }
       return *this;
@@ -299,10 +346,10 @@ class InlinedHashTable {
       return *this;
     }
 
-    // First NumInlinedElements are stored in inlined. The rest are stored in
+    // First NumInlinedBuckets are stored in inlined. The rest are stored in
     // outlined.
-    std::array<Elem, NumInlinedElements> inlined;
-    std::unique_ptr<Elem[]> outlined;
+    std::array<Bucket, NumInlinedBuckets> inlined;
+    std::unique_ptr<Bucket[]> outlined;
     // # of filled slots.
     IndexType size;
     // Capacity of inlined + capacity of outlined. Always a power of two.
@@ -312,46 +359,33 @@ class InlinedHashTable {
     IndexType num_empty_slots;
   };
 
-  static IndexType QuadraticProbe(const Array& array, IndexType current,
-                                  int retries) {
+  static IndexType NextProbe(const Array& array, IndexType current,
+                             int retries) {
     return (current + retries) & (array.capacity - 1);
   }
 
   IndexType ComputeCapacity(IndexType desired) {
     desired /= MaxLoadFactor();
-    if (desired < NumInlinedElements) desired = NumInlinedElements;
+    if (desired < NumInlinedBuckets) desired = NumInlinedBuckets;
     if (desired <= 0) return desired;
     return static_cast<IndexType>(1)
            << static_cast<int>(std::ceil(std::log2(desired)));
   }
 
-  // Fill "array" with empty_key.
-  void InitArray(const Key& empty_key, Array* array) const {
-    for (Elem& elem : array->inlined) {
-      *ExtractMutableKey(&elem) = empty_key;
-    }
-    if (array->outlined != nullptr) {
-      IndexType n = array->capacity - array->inlined.size();
-      for (IndexType i = 0; i < n; ++i) {
-        *ExtractMutableKey(&array->outlined[i]) = empty_key;
-      }
-    }
-  }
-
   // Return the index'th slot in array.
-  static const Elem& ArraySlot(const Array& array, IndexType index) {
-    if (index < NumInlinedElements) {
+  static const Bucket& GetBucket(const Array& array, IndexType index) {
+    if (index < NumInlinedBuckets) {
       return array.inlined[index];
     }
-    return array.outlined[index - NumInlinedElements];
+    return array.outlined[index - NumInlinedBuckets];
   }
 
   // Return the mutable pointer to the index'th slot in array.
-  static Elem* MutableArraySlot(Array* array, IndexType index) {
-    if (index < NumInlinedElements) {
+  static Bucket* MutableBucket(Array* array, IndexType index) {
+    if (index < NumInlinedBuckets) {
       return &array->inlined[index];
     }
-    return &array->outlined[index - NumInlinedElements];
+    return &array->outlined[index - NumInlinedBuckets];
   }
 
   // Find the first filled slot at or after "from". For incremenenting an
@@ -362,8 +396,8 @@ class InlinedHashTable {
       if (i >= array.capacity) {
         return kEnd;
       }
-      const Key& k = ExtractKey(ArraySlot(array, i));
-      if (!IsEmptyKey(k) && !IsDeletedKey(k)) {
+      const Bucket& bucket = GetBucket(array, i);
+      if (bucket.md.IsOccupied()) {
         return i;
       }
       ++i;
@@ -373,53 +407,102 @@ class InlinedHashTable {
   // Find "k" in the array. If found, set *index to the location of the key in
   // the array.
   bool FindInArray(const Array& array, const Key& k, IndexType* index) const {
-    if (array.capacity == 0) return false;
-    *index = ComputeHash(k) & (array.capacity - 1);
-    const IndexType start_index = *index;
-    for (int retries = 1;; ++retries) {
-      const Elem& elem = ArraySlot(array, *index);
-      const Key& key = ExtractKey(elem);
+    if (__builtin_expect(array.capacity == 0, 0)) return false;
+
+    const IndexType start_index = ComputeHash(k) & (array.capacity - 1);
+    *index = start_index;
+    const BucketMetadata& hop_info = GetBucket(array, start_index).md;
+    for (int i = 0; i < std::min<int>(MaxHopDistance(), array.capacity); ++i) {
+      if (!hop_info.HasLeaf(i)) continue;
+
+      *index = (start_index + i) & (array.capacity - 1);
+      const Bucket& elem = GetBucket(array, *index);
+      const Key& key = ExtractKey(elem.value);
       if (KeysEqual(key, k)) {
         return true;
       }
-      if (IsEmptyKey(key)) {
-        return false;
-      }
-      if (retries > array.capacity) {
-        return false;
-      }
-      *index = QuadraticProbe(array, *index, retries);
     }
+    return false;
   }
+
+  static constexpr int MaxHopDistance() { return 32; }
+  static constexpr int MaxAddDistance() { return 32; }
 
   // Either find "k" in the array, or find a slot into which "k" can be
   // inserted.
-  InsertResult InsertInArray(Array* array, const Key& k, IndexType* index) {
-    if (array->capacity == 0) return ARRAY_FULL;
-    *index = ComputeHash(k) & (array->capacity - 1);
-    const IndexType start_index = *index;
-    for (int retries = 1;; ++retries) {
-      const Elem& elem = ArraySlot(*array, *index);
-      const Key& key = ExtractKey(elem);
-      if (KeysEqual(key, k)) {
-        return KEY_FOUND;
-      }
-      if (IsDeletedKey(key)) {
-        return EMPTY_SLOT_FOUND;
-      }
-      if (IsEmptyKey(key)) {
-        if (array->num_empty_slots < array->capacity * (1 - MaxLoadFactor())) {
-          return ARRAY_FULL;
-        } else {
-          --array->num_empty_slots;
-          return EMPTY_SLOT_FOUND;
+  InsertResult InsertInArray(Array* array, const Key& k, IndexType* index_found) {
+    if (__builtin_expect(array->capacity == 0, 0)) return ARRAY_FULL;
+    const size_t hash = ComputeHash(k);
+    const IndexType origin_index = hash & (array->capacity - 1);
+    Bucket* origin_bucket = MutableBucket(array, origin_index);
+    IndexType free_index = kEnd;
+    for (int i = 0; i < std::min<IndexType>(MaxAddDistance(), array->capacity);
+         ++i) {
+      const IndexType index = (hash + i) & (array->capacity - 1);
+      if (free_index == kEnd) {
+        Bucket* elem = MutableBucket(array, index);
+        if (!elem->md.IsOccupied()) {
+          free_index = index;
         }
       }
-      if (retries > array->capacity) {
-        return ARRAY_FULL;
+      if (origin_bucket->md.HasLeaf(i)) {
+        Bucket* elem = MutableBucket(array, index);
+        if (KeysEqual(ExtractKey(elem->value), k)) {
+          *index_found = origin_index;
+          return KEY_FOUND;
+        }
       }
-      *index = QuadraticProbe(*array, *index, retries);
     }
+    if (free_index != kEnd) {
+      do {
+        int free_distance = Distance(*array, origin_index, free_index);
+        if (free_distance < MaxHopDistance()) {
+          Bucket* free_bucket = MutableBucket(array, free_index);
+          origin_bucket->md.SetLeaf(free_distance);
+          free_bucket->md.SetOrigin(free_distance);
+          *index_found = free_index;
+          return EMPTY_SLOT_FOUND;
+        }
+        free_index = FindCloserFreeBucket(array, free_index);
+      } while (free_index != kEnd);
+    }
+    return ARRAY_FULL;
+  }
+
+  static int Distance(const Array& array, int i0, int i1) {
+    if (i1 >= i0) return i1 - i0;
+    return (i1 - i0 + array.capacity);
+  }
+
+  IndexType FindCloserFreeBucket(Array* array, IndexType free_index) {
+    Bucket* free_bucket = MutableBucket(array, free_index);
+
+    for (int dist = MaxHopDistance() - 1; dist > 0; --dist) {
+      IndexType moved_bucket_index =
+          (free_index - dist) % (array->capacity - 1);
+      Bucket* moved_elem = MutableBucket(array, moved_bucket_index);
+
+      IndexType new_free_bucket_index = kEnd;
+      int new_free_dist = -1;
+      for (int i = 0; i < dist; ++i) {
+        if (moved_elem->md.HasLeaf(i)) {
+          new_free_dist = dist;
+          break;
+        }
+      }
+      if (new_free_dist >= 0) {
+        IndexType new_free_bucket_index =
+            (moved_bucket_index + new_free_dist) % (array->capacity - 1);
+        Bucket* new_free_bucket = MutableBucket(array, new_free_bucket_index);
+        moved_elem->md.SetLeaf(dist);
+        moved_elem->md.ClearLeaf(new_free_dist);
+        free_bucket->value = std::move(new_free_bucket->value);
+        free_bucket->md.SetOrigin(dist);
+        new_free_bucket->md.ClearOrigin();
+        return new_free_bucket_index;
+      }
+    }
+    return kEnd;
   }
 
   // Rehash the hash table. "delta" is the number of elements to add to the
@@ -428,16 +511,14 @@ class InlinedHashTable {
   void ExpandTable(IndexType delta) {
     const IndexType new_capacity = ComputeCapacity(array_.size + delta);
     Array new_array(new_capacity);
-    InitArray(options_.EmptyKey(), &new_array);
-    for (Elem& e : *this) {
-      IndexType index;
-      const Key& key = ExtractKey(e);
-      if (IsEmptyKey(key) || IsDeletedKey(key)) continue;
-      if (FindInArray(new_array, ExtractKey(e), &index)) {
-        abort();
-      }
-      *MutableArraySlot(&new_array, index) = std::move(e);
-      --new_array.num_empty_slots;
+    for (IndexType i = 0; i < array_.capacity; ++i) {
+      Bucket* old_bucket = MutableBucket(&array_, i);
+      if (!old_bucket->md.IsOccupied()) continue;
+      const Key& key = ExtractKey(old_bucket->value);
+
+      IndexType new_i;
+      assert(InsertInArray(&new_array, key, &new_i) == EMPTY_SLOT_FOUND);
+      MutableBucket(&new_array, new_i)->value = std::move(old_bucket->value);
     }
     new_array.size = array_.size;
     array_ = std::move(new_array);
@@ -451,8 +532,8 @@ class InlinedHashTable {
     T0 first;
   };
 
-  const Key& ExtractKey(const Elem& elem) const { return get_key_.Get(elem); }
-  Key* ExtractMutableKey(Elem* elem) const { return get_key_.Mutable(elem); }
+  const Key& ExtractKey(const Value& elem) const { return get_key_.Get(elem); }
+  Key* ExtractMutableKey(Value* elem) const { return get_key_.Mutable(elem); }
   IndexType ComputeHash(const Key& key) const { return hash_(key); }
   bool KeysEqual(const Key& k0, const Key& k1) const {
     return equal_to_(k0, k1);
@@ -492,19 +573,24 @@ class InlinedHashTable {
   Array array_;
 };
 
-template <typename Key, typename Value, int NumInlinedElements,
-          typename Options, typename Hash = std::hash<Key>,
-          typename EqualTo = std::equal_to<Key>, typename IndexType = size_t>
+template <typename Key, typename Value, int NumInlinedBuckets, typename Options,
+          typename Hash = std::hash<Key>, typename EqualTo = std::equal_to<Key>,
+          typename IndexType = size_t>
 class InlinedHashMap {
  public:
-  using Elem = std::pair<Key, Value>;
-  using value_type = Elem;
-  struct GetKey {
-    const Key& Get(const Elem& elem) const { return elem.first; }
-    Key* Mutable(Elem* elem) const { return &elem->first; }
+  using BucketValue = std::pair<Key, Value>;
+  using value_type = BucketValue;
+  struct Bucket {
+    InlinedHashTableBucketMetadata md;
+    BucketValue value;
   };
-  using Table = InlinedHashTable<Key, Elem, NumInlinedElements, Options, GetKey,
-                                 Hash, EqualTo, IndexType>;
+
+  struct GetKey {
+    const Key& Get(const BucketValue& elem) const { return elem.first; }
+    Key* Mutable(BucketValue* elem) const { return &elem->first; }
+  };
+  using Table = InlinedHashTable<Bucket, Key, BucketValue, NumInlinedBuckets,
+                                 Options, GetKey, Hash, EqualTo, IndexType>;
   using iterator = typename Table::iterator;
   using const_iterator = typename Table::const_iterator;
 
@@ -524,7 +610,7 @@ class InlinedHashMap {
   iterator find(const Key& k) { return impl_.find(k); }
   const_iterator find(const Key& k) const { return impl_.find(k); }
 
-  std::pair<iterator, bool> insert(Elem&& value) {
+  std::pair<iterator, bool> insert(value_type&& value) {
     return impl_.insert(std::move(value));
   }
   iterator erase(iterator i) { return impl_.erase(i); }
@@ -533,12 +619,12 @@ class InlinedHashMap {
   Value& operator[](const Key& k) {
     IndexType index;
     typename Table::InsertResult result = impl_.Insert(k, &index);
-    Elem* slot = impl_.Mutable(index);
+    Bucket* bucket = impl_.Mutable(index);
     if (result != Table::KEY_FOUND) {
       // newly inserted. fill the key.
-      slot->first = k;
+      bucket->value.first = k;
     }
-    return slot->second;
+    return bucket->value.second;
   }
 
   // Non-standard methods, mainly for testing.
@@ -548,17 +634,22 @@ class InlinedHashMap {
   Table impl_;
 };
 
-template <typename Elem, int NumInlinedElements, typename Options,
-          typename Hash = std::hash<Elem>,
-          typename EqualTo = std::equal_to<Elem>, typename IndexType = size_t>
+template <typename Value, int NumInlinedBuckets, typename Options,
+          typename Hash = std::hash<Value>,
+          typename EqualTo = std::equal_to<Value>, typename IndexType = size_t>
 class InlinedHashSet {
  public:
-  struct GetKey {
-    const Elem& Get(const Elem& elem) const { return elem; }
-    Elem* Mutable(Elem* elem) const { return elem; }
+  struct Bucket {
+    InlinedHashTableBucketMetadata md;
+    Value value;
   };
-  using Table = InlinedHashTable<Elem, Elem, NumInlinedElements, Options,
-                                 GetKey, Hash, EqualTo, IndexType>;
+
+  struct GetKey {
+    const Value& Get(const Value& elem) const { return elem; }
+    Value* Mutable(Value* elem) const { return elem; }
+  };
+  using Table = InlinedHashTable<Bucket, Value, Value, NumInlinedBuckets,
+                                 Options, GetKey, Hash, EqualTo, IndexType>;
   using iterator = typename Table::iterator;
   using const_iterator = typename Table::const_iterator;
 
@@ -574,18 +665,18 @@ class InlinedHashSet {
   const_iterator begin() const { return impl_.cbegin(); }
   const_iterator end() const { return impl_.cend(); }
   IndexType size() const { return impl_.size(); }
-  std::pair<iterator, bool> insert(Elem&& value) {
+  std::pair<iterator, bool> insert(Value&& value) {
     return impl_.insert(std::move(value));
   }
-  std::pair<iterator, bool> insert(const Elem& value) {
+  std::pair<iterator, bool> insert(const Value& value) {
     return impl_.insert(value);
   }
 
-  iterator find(const Elem& k) { return impl_.find(k); }
-  const_iterator find(const Elem& k) const { return impl_.find(k); }
+  iterator find(const Value& k) { return impl_.find(k); }
+  const_iterator find(const Value& k) const { return impl_.find(k); }
   void clear() { impl_.clear(); }
   iterator erase(iterator i) { return impl_.erase(i); }
-  IndexType erase(const Elem& k) { return impl_.erase(k); }
+  IndexType erase(const Value& k) { return impl_.erase(k); }
 
   // Non-standard methods, mainly for testing.
   size_t capacity() const { return impl_.capacity(); }

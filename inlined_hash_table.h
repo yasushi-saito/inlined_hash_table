@@ -86,9 +86,9 @@ class InlinedHashTableBucketMetadata {
 };
 
 template <typename T>
-class InlineHashTableManualConstructor {
+class __attribute((aligned(sizeof(T)))) InlinedHashTableManualConstructor {
  public:
-  InlineHashTableManualConstructor() {}
+  InlinedHashTableManualConstructor() {}
 
   T* Mutable() { return reinterpret_cast<T*>(buf_); }
 
@@ -99,12 +99,20 @@ class InlineHashTableManualConstructor {
     new (buf_) T(std::forward<T>(values)...);
   }
 
+  template <typename... Arg>
+  void New(const Arg&... values) {
+    new (buf_) T(values...);
+  }
+
+  void New() { new (buf_) T(); }
+
   void Delete() { Mutable()->~T(); }
 
  private:
-  InlineHashTableManualConstructor(const InlineHashTableManualConstructor&) =
+  InlinedHashTableManualConstructor(const InlinedHashTableManualConstructor&) =
       delete;
-  char buf_[sizeof(T)];
+  void operator=(const InlinedHashTableManualConstructor&) = delete;
+  uint8_t buf_[sizeof(T)];
 };
 
 template <typename Key, typename Value, int NumInlinedBuckets, typename GetKey,
@@ -113,8 +121,53 @@ class InlinedHashTable {
  public:
   using BucketMetadata = InlinedHashTableBucketMetadata;
   struct Bucket {
-    InlinedHashTableBucketMetadata md;
-    Value value;
+    BucketMetadata md;
+    InlinedHashTableManualConstructor<Value> value;
+
+    Bucket() {}
+    ~Bucket() {
+      if (md.IsOccupied()) {
+        value.Delete();
+      }
+    }
+
+    Bucket(const Bucket& other) {
+      md = other.md;
+      if (md.IsOccupied()) {
+        value.New(other.value.Get());
+      }
+    }
+
+    Bucket(Bucket&& other) {
+      md = other.md;
+      other.md.ClearAll();
+      if (md.IsOccupied()) {
+        value.New(std::move(*other.value.Mutable()));
+      }
+    }
+
+    Bucket& operator=(Bucket&& other) {
+      if (md.IsOccupied()) {
+        value.Delete();
+      }
+      md = other.md;
+      other.md.ClearAll();
+      if (md.IsOccupied()) {
+        value.New(std::move(*other.value.Mutable()));
+      }
+      return *this;
+    }
+
+    Bucket& operator=(const Bucket& other) {
+      if (md.IsOccupied()) {
+        value.Delete();
+      }
+      md = other.md;
+      if (md.IsOccupied()) {
+        value.New(other.value.Get());
+      }
+      return *this;
+    }
   };
   static_assert((NumInlinedBuckets & (NumInlinedBuckets - 1)) == 0,
                 "NumInlinedBuckets must be a power of two");
@@ -160,8 +213,12 @@ class InlinedHashTable {
       return index_ != other.index_;
     }
 
-    Value& operator*() const { return table_->MutableBucket(index_)->value; }
-    Value* operator->() const { return &table_->MutableBucket(index_)->value; }
+    Value& operator*() const {
+      return *table_->MutableBucket(index_)->value.Mutable();
+    }
+    Value* operator->() const {
+      return table_->MutableBucket(index_)->value.Mutable();
+    }
 
     iterator operator++() {  // ++it
       index_ = table_->array_.NextValidElement(index_ + 1);
@@ -198,8 +255,12 @@ class InlinedHashTable {
       return index_ != other.index_;
     }
 
-    const Value& operator*() const { return table_->GetBucket(index_).value; }
-    const Value* operator->() const { return &table_->GetBucket(index_).value; }
+    const Value& operator*() const {
+      return table_->GetBucket(index_).value.Get();
+    }
+    const Value* operator->() const {
+      return &table_->GetBucket(index_).value.Get();
+    }
 
     const_iterator operator++() {  // ++it
       index_ = table_->array_.NextValidElement(index_ + 1);
@@ -250,18 +311,19 @@ class InlinedHashTable {
   }
 
   void clear() {
-    for (Bucket& elem : array_.inlined_) {
-      elem.md.ClearAll();
-      if (!std::is_pod<Value>::value) {
-        elem.value = Value();
+    for (Bucket& bucket : array_.inlined_) {
+      if (bucket.md.IsOccupied()) {
+        bucket.value.Delete();
       }
+      bucket.md.ClearAll();
     }
     if (array_.outlined_ != nullptr) {
       for (size_t i = 0; i < array_.capacity() - array_.inlined_.size(); ++i) {
-        array_.outlined_[i].md.ClearAll();
-        if (!std::is_pod<Value>::value) {
-          array_.outlined_[i].value = Value();
+        Bucket* bucket = &array_.outlined_[i];
+        if (bucket->md.IsOccupied()) {
+          bucket->value.Delete();
         }
+        bucket->md.ClearAll();
       }
     }
     array_.size_ = 0;
@@ -275,9 +337,7 @@ class InlinedHashTable {
     assert(bucket->md.IsOccupied());
     const int delta = bucket->md.GetOrigin();
     bucket->md.ClearOrigin();
-    if (!std::is_pod<Value>::value) {
-      bucket->value = Value();
-    }
+    bucket->value.Delete();
     Bucket* origin = array_.MutableBucket(array_.Clamp(itr.index_ - delta));
     origin->md.ClearLeaf(delta);
     --array_.size_;
@@ -298,7 +358,7 @@ class InlinedHashTable {
     if (result == KEY_FOUND) {
       return std::make_pair(iterator(this, index), false);
     }
-    array_.MutableBucket(index)->value = std::move(value);
+    array_.MutableBucket(index)->value.New(std::move(value));
     return std::make_pair(iterator(this, index), true);
   }
 
@@ -308,7 +368,7 @@ class InlinedHashTable {
     if (result == KEY_FOUND) {
       return std::make_pair(iterator(this, index), false);
     }
-    array_.MutableBucket(index)->value = value;
+    array_.MutableBucket(index)->value.New(value);
     return std::make_pair(iterator(this, index), true);
   }
 
@@ -382,6 +442,12 @@ class InlinedHashTable {
       other.outlined_.reset();
       other.size_ = 0;
       other.capacity_mask_ = other.inlined_.size() - 1;
+      for (Bucket& bucket : other.inlined_) {
+        if (bucket.md.IsOccupied()) {
+          bucket.value.Delete();
+        }
+        bucket.md.ClearAll();
+      }
       return *this;
     }
 
@@ -451,7 +517,7 @@ class InlinedHashTable {
     while ((distance = it.Next()) >= 0) {
       *index = array.Clamp(start_index + distance);
       const Bucket& elem = array.GetBucket(*index);
-      if (equal_to_(k, ExtractKey(elem.value))) {
+      if (equal_to_(k, ExtractKey(elem.value.Get()))) {
         return true;
       }
     }
@@ -530,7 +596,7 @@ class InlinedHashTable {
       Bucket* new_free_bucket = array->MutableBucket(new_free_bucket_index);
       moved_bucket->md.SetLeaf(dist);
       moved_bucket->md.ClearLeaf(new_free_dist);
-      free_bucket->value = std::move(new_free_bucket->value);
+      free_bucket->value.New(std::move(*new_free_bucket->value.Mutable()));
       free_bucket->md.SetOrigin(dist);
       new_free_bucket->md.ClearOrigin();
       return new_free_bucket_index;
@@ -546,12 +612,13 @@ class InlinedHashTable {
     for (IndexType i = 0; i < array_.capacity(); ++i) {
       Bucket* old_bucket = array_.MutableBucket(i);
       if (!old_bucket->md.IsOccupied()) continue;
-      const Key& key = ExtractKey(old_bucket->value);
+      const Key& key = ExtractKey(old_bucket->value.Get());
 
       IndexType new_i;
       InsertResult result = InsertInArray(&new_array, key, hash_(key), &new_i);
       assert(result == EMPTY_SLOT_FOUND);
-      new_array.MutableBucket(new_i)->value = std::move(old_bucket->value);
+      new_array.MutableBucket(new_i)->value.New(
+          std::move(*old_bucket->value.Mutable()));
     }
     new_array.size_ = array_.size_;
     array_ = std::move(new_array);
@@ -618,10 +685,11 @@ class InlinedHashMap {
     typename Table::InsertResult result = impl_.Insert(k, &index);
     typename Table::Bucket* bucket = impl_.MutableBucket(index);
     if (result != Table::KEY_FOUND) {
+      bucket->value.New();
       // newly inserted. fill the key.
-      bucket->value.first = k;
+      bucket->value.Mutable()->first = k;
     }
-    return bucket->value.second;
+    return bucket->value.Mutable()->second;
   }
 
   // Non-standard methods, mainly for testing.

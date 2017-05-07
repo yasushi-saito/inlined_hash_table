@@ -200,7 +200,7 @@ TEST(InlinedHashSet, ManyInserts) {
 }
 
 TEST(ManualConstructor, String) {
-  InlineHashTableManualConstructor<std::string> m;
+  InlinedHashTableManualConstructor<std::string> m;
   static_assert(sizeof(m) == sizeof(std::string), "size");
   m.New("foobar");
   EXPECT_EQ(m.Get(), "foobar");
@@ -210,7 +210,7 @@ TEST(ManualConstructor, String) {
 }
 
 TEST(ManualConstructor, Int) {
-  InlineHashTableManualConstructor<int> m;
+  InlinedHashTableManualConstructor<int> m;
   static_assert(sizeof(m) == sizeof(int), "size");
   m.New(4);
   EXPECT_EQ(m.Get(), 4);

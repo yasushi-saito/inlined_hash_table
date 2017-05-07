@@ -38,7 +38,7 @@ struct DefaultInlinedHashTableOptions {
 
 class InlinedHashTableBucketMetadata {
  public:
-  InlinedHashTableBucketMetadata() { mask_ = 0; }
+  InlinedHashTableBucketMetadata() : mask_(0), origin_(0) {}
 
   class LeafIterator {
    public:
@@ -50,7 +50,6 @@ class InlinedHashTableBucketMetadata {
 
       mask_ >>= i;
       base_ += i;
-      if (base_ >= kMaskBits) return -1;
       return base_;
     }
 
@@ -74,28 +73,30 @@ class InlinedHashTableBucketMetadata {
     mask_ &= ~(1U << index);
   }
 
-  bool IsOccupied() const { return (mask_ >> kMaskBits) != 0; }
+  bool IsOccupied() const { return origin_ != 0; }
 
   void SetOrigin(int delta_from_origin) {
     assert(delta_from_origin < kMaskBits);
-    mask_ = (mask_ & ((1 << kMaskBits) - 1)) |
-            (static_cast<unsigned>(delta_from_origin + 1) << kMaskBits);
+    origin_ = delta_from_origin + 1;
   }
 
-  void ClearOrigin() { mask_ &= ((1 << kMaskBits) - 1); }
+  void ClearOrigin() { origin_ = 0; }
 
   int GetOrigin() const {
-    unsigned origin = mask_ >> kMaskBits;
-    if (origin == 0) return -1;
-    return origin - 1;
+    if (origin_ == 0) return -1;
+    return origin_ - 1;
   }
 
-  void ClearAll() { mask_ = 0; }
+  void ClearAll() {
+    mask_ = 0;
+    origin_ = 0;
+  }
 
  private:
   static constexpr int kMaskBits = 27;
   // Lower 27 bits is the mask, the upper 5 bits is the origin.
-  unsigned mask_;
+  unsigned mask_ : kMaskBits;
+  unsigned origin_ : 32 - kMaskBits;
 };
 
 template <typename Key, typename Value, int NumInlinedBuckets, typename Options,
@@ -419,6 +420,7 @@ class InlinedHashTable {
 
     IndexType capacity_mask() const { return capacity_mask_; }
     IndexType capacity() const { return capacity_mask_ + 1; }
+    IndexType size() const { return size_; }
 
     // First NumInlinedBuckets are stored in inlined. The rest are stored in
     // outlined.
@@ -451,15 +453,14 @@ class InlinedHashTable {
   }
 
   IndexType ComputeCapacity(IndexType desired) {
-    desired /= options_.MaxLoadFactor();
     if (desired < NumInlinedBuckets) desired = NumInlinedBuckets;
     if (desired <= 0) return desired;
     return static_cast<IndexType>(1)
            << static_cast<int>(std::ceil(std::log2(desired)));
   }
 
-  static constexpr int MaxHopDistance() { return 8; }
-  static constexpr int MaxAddDistance() { return 27; }
+  static constexpr int MaxHopDistance() { return 27; }
+  static constexpr int MaxAddDistance() { return 128; }
 
   // Either find "k" in the array, or find a slot into which "k" can be
   // inserted.
@@ -494,35 +495,39 @@ class InlinedHashTable {
     return ARRAY_FULL;
   }
 
+  // Try to move free_index closer to the origin by swapping it with another
+  // bucket in the interval.
+  //
+  // REQUIRES: free_index is not occupied, and is MaxHopDistance or more from
+  // the origin bucket you are trying to insert into.
   IndexType FindCloserFreeBucket(Array* array, IndexType free_index) {
     Bucket* free_bucket = array->MutableBucket(free_index);
 
     for (int dist = MaxHopDistance() - 1; dist > 0; --dist) {
       IndexType moved_bucket_index = array->Clamp(free_index - dist);
-      Bucket* moved_elem = array->MutableBucket(moved_bucket_index);
+      Bucket* moved_bucket = array->MutableBucket(moved_bucket_index);
 
-      // Find the first leaf of moved_elem.
+      // Find the first leaf of moved_bucket.
       int new_free_dist = -1;
       {
-        BucketMetadata::LeafIterator it(&moved_elem->md);
+        BucketMetadata::LeafIterator it(&moved_bucket->md);
         int d;
         while ((d = it.Next()) >= 0) {
-          if (d >= dist) break;
           new_free_dist = d;
           break;
         }
       }
-      if (new_free_dist < 0) {
+      if (new_free_dist < 0 || new_free_dist >= dist) {
         // No leaf found before free_index.
         continue;
       }
 
-      // Swap the leaf@new_free_bucket_index and free_index.
+      // Swap the new_free_bucket_index and free_index.
       IndexType new_free_bucket_index =
           array->Clamp(moved_bucket_index + new_free_dist);
       Bucket* new_free_bucket = array->MutableBucket(new_free_bucket_index);
-      moved_elem->md.SetLeaf(dist);
-      moved_elem->md.ClearLeaf(new_free_dist);
+      moved_bucket->md.SetLeaf(dist);
+      moved_bucket->md.ClearLeaf(new_free_dist);
       free_bucket->value = std::move(new_free_bucket->value);
       free_bucket->md.SetOrigin(dist);
       new_free_bucket->md.ClearOrigin();
@@ -532,10 +537,11 @@ class InlinedHashTable {
   }
 
   // Rehash the hash table. "delta" is the number of elements to add to the
-  // current table. It's used to compute the capacity of the new table.  Culls
-  // tombstones and move all the existing elements and
+  // current table. It's used to compute the capacity of the new table.
   void ExpandTable(IndexType delta) {
     const IndexType new_capacity = ComputeCapacity(array_.capacity() + delta);
+    std::cerr << "Expanding  from " << array_.size() << " to " << new_capacity
+              << "\n";
     Array new_array(new_capacity);
     for (IndexType i = 0; i < array_.capacity(); ++i) {
       Bucket* old_bucket = array_.MutableBucket(i);

@@ -22,10 +22,10 @@ void ProfilerStop();
 using Map = InlinedHashMap<std::string, std::string, 8>;
 using Set = InlinedHashSet<std::string, 8>;
 
-template <typename Key, typename Value, int NumInlinedBuckets, typename Options,
-          typename GetKey, typename Hash, typename EqualTo, typename IndexType>
-void InlinedHashTable<Key, Value, NumInlinedBuckets, Options, GetKey, Hash,
-                      EqualTo, IndexType>::CheckConsistency() {
+template <typename Key, typename Value, int NumInlinedBuckets, typename GetKey,
+          typename Hash, typename EqualTo, typename IndexType>
+void InlinedHashTable<Key, Value, NumInlinedBuckets, GetKey, Hash, EqualTo,
+                      IndexType>::CheckConsistency() {
   const Array& array = array_;
   for (IndexType bi = 0; bi < array.capacity(); ++bi) {
     const Bucket& bucket = array.GetBucket(bi);
@@ -90,34 +90,6 @@ TEST(InlinedHashMap, Clear) {
   t.CheckConsistency();
 }
 
-TEST(InlinedHashMap, Capacity0) {
-  Map t(0);
-  EXPECT_EQ(8, t.capacity());
-  t.CheckConsistency();
-}
-
-TEST(InlinedHashMap, Capacity5) {
-  Map t(5);
-  EXPECT_EQ(8, t.capacity());
-  t.CheckConsistency();
-}
-
-TEST(InlinedHashMap, Capacity8) {
-  Map t(8);  // MaxLoadFactor will bump the capacity to 16
-  EXPECT_EQ(16, t.capacity());
-  t.CheckConsistency();
-
-  {
-    class StrTableOptions {
-     public:
-      double MaxLoadFactor() const { return 1; }
-    };
-    InlinedHashMap<std::string, std::string, 8, StrTableOptions> t2(8);
-    EXPECT_EQ(8, t2.capacity());
-    t.CheckConsistency();
-  }
-}
-
 TEST(InlinedHashMap, Iterators) {
   Map t;
   t["h0"] = "w0";
@@ -169,50 +141,6 @@ TEST(InlinedHashMap, Move) {
   EXPECT_TRUE(t.find("h0") == t.end());
   t.CheckConsistency();
   t2.CheckConsistency();
-}
-
-// Set the max load factor to 1.
-TEST(InlinedHashMap, OverrideMaxLoadFactor_1) {
-  class Options {
-   public:
-    int EmptyKey() const { return -1; }
-    double MaxLoadFactor() const { return 1.0; }
-  };
-
-  constexpr int kCapacity = 8;
-  InlinedHashSet<int, kCapacity, Options> t;
-  // Empty table should have just the inlined
-  // elements.
-  EXPECT_EQ(t.capacity(), kCapacity);
-  for (int i = 0; i < kCapacity; ++i) {
-    ASSERT_TRUE(t.insert(i).second);
-  }
-  EXPECT_EQ(t.capacity(), kCapacity);
-  t.insert(100);
-  EXPECT_EQ(t.capacity(), kCapacity * 2);
-}
-
-// Set the max load factor to 0.5
-TEST(InlinedHashMap, OverrideMaxLoadFactor_0_5) {
-  class Options {
-   public:
-    int EmptyKey() const { return -1; }
-    double MaxLoadFactor() const { return 0.5; }
-  };
-
-  constexpr int kCapacity = 8;
-  InlinedHashSet<int, kCapacity, Options> t;
-  // Empty table should have just the inlined
-  // elements.
-  EXPECT_EQ(t.capacity(), kCapacity);
-  for (int i = 0; i <= kCapacity; ++i) {
-    ASSERT_TRUE(t.insert(i).second);
-    if (i <= kCapacity / 2) {
-      EXPECT_EQ(t.capacity(), kCapacity) << i;
-    } else {
-      EXPECT_EQ(t.capacity(), kCapacity * 2) << i;
-    }
-  }
 }
 
 TEST(InlinedHashSet, Random) {
@@ -269,6 +197,26 @@ TEST(InlinedHashSet, ManyInserts) {
       ASSERT_EQ(r + 1, t[r]) << i;
     }
   }
+}
+
+TEST(ManualConstructor, String) {
+  InlineHashTableManualConstructor<std::string> m;
+  static_assert(sizeof(m) == sizeof(std::string), "size");
+  m.New("foobar");
+  EXPECT_EQ(m.Get(), "foobar");
+  *m.Mutable() = "hello";
+  EXPECT_EQ(m.Get(), "hello");
+  m.Delete();
+}
+
+TEST(ManualConstructor, Int) {
+  InlineHashTableManualConstructor<int> m;
+  static_assert(sizeof(m) == sizeof(int), "size");
+  m.New(4);
+  EXPECT_EQ(m.Get(), 4);
+  *m.Mutable() = 5;
+  EXPECT_EQ(m.Get(), 5);
+  m.Delete();
 }
 
 TEST(LeafIterator, Basic) {

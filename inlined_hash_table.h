@@ -16,25 +16,11 @@
 //
 // NumInlinedBuckets is the number of elements stored in-line with the table.
 //
-// Options is a class that defines one required method, and two optional
-// methods.
-//
-//   double MaxLoadFactor() const;   // optional
-//
-// MaxLoadFactor() defines when the hash table is expanded. The default value is
-// 0.75, meaning that if the number of non-empty slots in the table exceeds 75%
-// of the capacity, the hash table is doubled. The valid range of
-// MaxLoadFactor() is (0,1].
-//
 // Caution: each method must return the same value across multiple invocations.
 // Returning a compile-time constant allows the compiler to optimize the code
 // well.
 //
 // TODO: implement bucket reservation.
-
-struct DefaultInlinedHashTableOptions {
-  static constexpr double MaxLoadFactor() { return 0.9; }
-};
 
 class InlinedHashTableBucketMetadata {
  public:
@@ -99,8 +85,30 @@ class InlinedHashTableBucketMetadata {
   unsigned origin_ : 32 - kMaskBits;
 };
 
-template <typename Key, typename Value, int NumInlinedBuckets, typename Options,
-          typename GetKey, typename Hash, typename EqualTo, typename IndexType>
+template <typename T>
+class InlineHashTableManualConstructor {
+ public:
+  InlineHashTableManualConstructor() {}
+
+  T* Mutable() { return reinterpret_cast<T*>(buf_); }
+
+  const T& Get() const { return *reinterpret_cast<const T*>(buf_); }
+
+  template <typename... Arg>
+  void New(Arg&&... values) {
+    new (buf_) T(std::forward<T>(values)...);
+  }
+
+  void Delete() { Mutable()->~T(); }
+
+ private:
+  InlineHashTableManualConstructor(const InlineHashTableManualConstructor&) =
+      delete;
+  char buf_[sizeof(T)];
+};
+
+template <typename Key, typename Value, int NumInlinedBuckets, typename GetKey,
+          typename Hash, typename EqualTo, typename IndexType>
 class InlinedHashTable {
  public:
   using BucketMetadata = InlinedHashTableBucketMetadata;
@@ -110,10 +118,9 @@ class InlinedHashTable {
   };
   static_assert((NumInlinedBuckets & (NumInlinedBuckets - 1)) == 0,
                 "NumInlinedBuckets must be a power of two");
-  InlinedHashTable(IndexType bucket_count, const Options& options,
-                   const Hash& hash, const EqualTo& equal_to)
-      : options_(options),
-        hash_(hash),
+  InlinedHashTable(IndexType bucket_count, const Hash& hash,
+                   const EqualTo& equal_to)
+      : hash_(hash),
         equal_to_(equal_to),
         array_(ComputeCapacity(bucket_count)) {}
 
@@ -126,7 +133,6 @@ class InlinedHashTable {
 
   InlinedHashTable& operator=(const InlinedHashTable& other) {
     array_ = other.array_;
-    options_ = other.options_;
     get_key_ = other.get_key_;
     hash_ = other.hash_;
     equal_to_ = other.equal_to_;
@@ -134,7 +140,6 @@ class InlinedHashTable {
   }
   InlinedHashTable& operator=(InlinedHashTable&& other) {
     array_ = std::move(other.array_);
-    options_ = std::move(other.options_);
     get_key_ = std::move(other.get_key_);
     hash_ = std::move(other.hash_);
     equal_to_ = std::move(other.equal_to_);
@@ -143,8 +148,8 @@ class InlinedHashTable {
 
   class iterator {
    public:
-    using Table = InlinedHashTable<Key, Value, NumInlinedBuckets, Options,
-                                   GetKey, Hash, EqualTo, IndexType>;
+    using Table = InlinedHashTable<Key, Value, NumInlinedBuckets, GetKey, Hash,
+                                   EqualTo, IndexType>;
     iterator(Table* table, IndexType index) : table_(table), index_(index) {}
     iterator(const typename Table::iterator& i)
         : table_(i.table_), index_(i.index_) {}
@@ -155,8 +160,8 @@ class InlinedHashTable {
       return index_ != other.index_;
     }
 
-    Value& operator*() const { return table_->Mutable(index_)->value; }
-    Value* operator->() const { return &table_->Mutable(index_)->value; }
+    Value& operator*() const { return table_->MutableBucket(index_)->value; }
+    Value* operator->() const { return &table_->MutableBucket(index_)->value; }
 
     iterator operator++() {  // ++it
       index_ = table_->array_.NextValidElement(index_ + 1);
@@ -177,8 +182,8 @@ class InlinedHashTable {
 
   class const_iterator {
    public:
-    using Table = InlinedHashTable<Key, Value, NumInlinedBuckets, Options,
-                                   GetKey, Hash, EqualTo, IndexType>;
+    using Table = InlinedHashTable<Key, Value, NumInlinedBuckets, GetKey, Hash,
+                                   EqualTo, IndexType>;
     const_iterator() {}
     const_iterator(const Table::iterator& i)
         : table_(i.table_), index_(i.index_) {}
@@ -193,8 +198,8 @@ class InlinedHashTable {
       return index_ != other.index_;
     }
 
-    const Value& operator*() const { return table_->Get(index_).value; }
-    const Value* operator->() const { return &table_->Get(index_).value; }
+    const Value& operator*() const { return table_->GetBucket(index_).value; }
+    const Value* operator->() const { return &table_->GetBucket(index_).value; }
 
     const_iterator operator++() {  // ++it
       index_ = table_->array_.NextValidElement(index_ + 1);
@@ -223,7 +228,6 @@ class InlinedHashTable {
     return const_iterator(this, NextValidElement(array_, 0));
   }
   const_iterator cend() const { return const_iterator(nullptr, kEnd); }
-
   const_iterator begin() const { return cbegin(); }
   const_iterator end() const { return cend(); }
 
@@ -313,8 +317,10 @@ class InlinedHashTable {
   IndexType capacity() const { return array_.capacity(); }
 
   // Backdoor methods used by map operator[].
-  Bucket* Mutable(IndexType index) { return array_.MutableBucket(index); }
-  const Bucket& Get(IndexType index) const { return array_.GetBucket(index); }
+  Bucket* MutableBucket(IndexType index) { return array_.MutableBucket(index); }
+  const Bucket& GetBucket(IndexType index) const {
+    return array_.GetBucket(index);
+  }
 
   enum InsertResult { KEY_FOUND, EMPTY_SLOT_FOUND, ARRAY_FULL };
   InsertResult Insert(const Key& key, IndexType* index) {
@@ -473,8 +479,8 @@ class InlinedHashTable {
     for (int i = 0;
          i < std::min<IndexType>(MaxAddDistance(), array->capacity()); ++i) {
       const IndexType index = array->Clamp(origin_index + i);
-      Bucket* elem = array->MutableBucket(index);
-      if (!elem->md.IsOccupied()) {
+      const Bucket& elem = array->GetBucket(index);
+      if (!elem.md.IsOccupied()) {
         free_index = index;
         break;
       }
@@ -511,11 +517,7 @@ class InlinedHashTable {
       int new_free_dist = -1;
       {
         BucketMetadata::LeafIterator it(&moved_bucket->md);
-        int d;
-        while ((d = it.Next()) >= 0) {
-          new_free_dist = d;
-          break;
-        }
+        new_free_dist = it.Next();
       }
       if (new_free_dist < 0 || new_free_dist >= dist) {
         // No leaf found before free_index.
@@ -540,8 +542,6 @@ class InlinedHashTable {
   // current table. It's used to compute the capacity of the new table.
   void ExpandTable(IndexType delta) {
     const IndexType new_capacity = ComputeCapacity(array_.capacity() + delta);
-    std::cerr << "Expanding  from " << array_.size() << " to " << new_capacity
-              << "\n";
     Array new_array(new_capacity);
     for (IndexType i = 0; i < array_.capacity(); ++i) {
       Bucket* old_bucket = array_.MutableBucket(i);
@@ -569,7 +569,6 @@ class InlinedHashTable {
   Key* ExtractMutableKey(Value* elem) const { return get_key_.Mutable(elem); }
   IndexType ComputeHash(const Key& key) const { return hash_(key); }
 
-  Options options_;
   GetKey get_key_;
   Hash hash_;
   EqualTo equal_to_;
@@ -577,7 +576,6 @@ class InlinedHashTable {
 };
 
 template <typename Key, typename Value, int NumInlinedBuckets,
-          typename Options = DefaultInlinedHashTableOptions,
           typename Hash = std::hash<Key>, typename EqualTo = std::equal_to<Key>,
           typename IndexType = size_t>
 class InlinedHashMap {
@@ -588,15 +586,15 @@ class InlinedHashMap {
     const Key& Get(const BucketValue& elem) const { return elem.first; }
     Key* Mutable(BucketValue* elem) const { return &elem->first; }
   };
-  using Table = InlinedHashTable<Key, BucketValue, NumInlinedBuckets, Options,
-                                 GetKey, Hash, EqualTo, IndexType>;
+  using Table = InlinedHashTable<Key, BucketValue, NumInlinedBuckets, GetKey,
+                                 Hash, EqualTo, IndexType>;
   using iterator = typename Table::iterator;
   using const_iterator = typename Table::const_iterator;
 
-  InlinedHashMap() : impl_(0, Options(), Hash(), EqualTo()) {}
-  InlinedHashMap(IndexType bucket_count, const Options& options = Options(),
-                 const Hash& hash = Hash(), const EqualTo& equal_to = EqualTo())
-      : impl_(bucket_count, options, hash, equal_to) {}
+  InlinedHashMap() : impl_(0, Hash(), EqualTo()) {}
+  InlinedHashMap(IndexType bucket_count, const Hash& hash = Hash(),
+                 const EqualTo& equal_to = EqualTo())
+      : impl_(bucket_count, hash, equal_to) {}
 
   bool empty() const { return impl_.empty(); }
   iterator begin() { return impl_.begin(); }
@@ -618,7 +616,7 @@ class InlinedHashMap {
   Value& operator[](const Key& k) {
     IndexType index;
     typename Table::InsertResult result = impl_.Insert(k, &index);
-    typename Table::Bucket* bucket = impl_.Mutable(index);
+    typename Table::Bucket* bucket = impl_.MutableBucket(index);
     if (result != Table::KEY_FOUND) {
       // newly inserted. fill the key.
       bucket->value.first = k;
@@ -637,7 +635,6 @@ class InlinedHashMap {
 };
 
 template <typename Value, int NumInlinedBuckets,
-          typename Options = DefaultInlinedHashTableOptions,
           typename Hash = std::hash<Value>,
           typename EqualTo = std::equal_to<Value>, typename IndexType = size_t>
 class InlinedHashSet {
@@ -651,15 +648,15 @@ class InlinedHashSet {
     const Value& Get(const Value& elem) const { return elem; }
     Value* Mutable(Value* elem) const { return elem; }
   };
-  using Table = InlinedHashTable<Value, Value, NumInlinedBuckets, Options,
-                                 GetKey, Hash, EqualTo, IndexType>;
+  using Table = InlinedHashTable<Value, Value, NumInlinedBuckets, GetKey, Hash,
+                                 EqualTo, IndexType>;
   using iterator = typename Table::iterator;
   using const_iterator = typename Table::const_iterator;
 
-  InlinedHashSet() : impl_(0, Options(), Hash(), EqualTo()) {}
-  InlinedHashSet(IndexType bucket_count, const Options& options = Options(),
-                 const Hash& hash = Hash(), const EqualTo& equal_to = EqualTo())
-      : impl_(bucket_count, options, hash, equal_to) {}
+  InlinedHashSet() : impl_(0, Hash(), EqualTo()) {}
+  InlinedHashSet(IndexType bucket_count, const Hash& hash = Hash(),
+                 const EqualTo& equal_to = EqualTo())
+      : impl_(bucket_count, hash, equal_to) {}
   bool empty() const { return impl_.empty(); }
   iterator begin() { return impl_.begin(); }
   iterator end() { return impl_.end(); }

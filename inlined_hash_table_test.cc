@@ -298,19 +298,18 @@ Value& Callback(Value& v) {
 }
 #pragma GCC pop_options
 
-std::vector<int> TestIntValues(int num_values) {
+std::vector<int64_t> TestIntValues(int num_values) {
   std::mt19937 rand(0);
-  std::vector<int> values;
-  std::uniform_int_distribution<int> dist(0, std::numeric_limits<int>::max());
+  std::vector<int64_t> values;
   for (int i = 0; i < num_values; ++i) {
-    values.push_back(dist(rand));
+    values.push_back(rand());
   }
   return values;
 }
 
 template <typename Map>
 void DoInsertIntTest(benchmark::State& state, Map* map) {
-  std::vector<int> values = TestIntValues(state.range(0));
+  std::vector<int64_t> values = TestIntValues(state.range(0));
   while (state.KeepRunning()) {
     for (int v : values) {
       Callback((*map)[v]) = v + 1;
@@ -321,7 +320,7 @@ void DoInsertIntTest(benchmark::State& state, Map* map) {
 
 template <typename Map>
 void DoLookupIntTest(benchmark::State& state, Map* map) {
-  std::vector<int> values = TestIntValues(state.range(0));
+  std::vector<int64_t> values = TestIntValues(state.range(0));
   for (int v : values) {
     (*map)[v] = v + 1;
   }
@@ -380,19 +379,19 @@ int kMinValues = 4;
 int kMaxValues = 1024 * 1024;
 
 void BM_Insert_InlinedMap_Int(benchmark::State& state) {
-  InlinedHashMap<int, int, 8> map;
+  InlinedHashMap<int64_t, int64_t, 8> map;
   DoInsertIntTest(state, &map);
 }
 BENCHMARK(BM_Insert_InlinedMap_Int)->Range(kMinValues, kMaxValues);
 
 void BM_Insert_UnorderedMap_Int(benchmark::State& state) {
-  std::unordered_map<int, int> map;
+  std::unordered_map<int64_t, int64_t> map;
   DoInsertIntTest(state, &map);
 }
 BENCHMARK(BM_Insert_UnorderedMap_Int)->Range(kMinValues, kMaxValues);
 
 void BM_Insert_DenseHashMap_Int(benchmark::State& state) {
-  google::dense_hash_map<int, int> map;
+  google::dense_hash_map<int64_t, int64_t> map;
   map.set_empty_key(-1);
   map.set_deleted_key(-1);
   DoInsertIntTest(state, &map);
@@ -400,21 +399,21 @@ void BM_Insert_DenseHashMap_Int(benchmark::State& state) {
 BENCHMARK(BM_Insert_DenseHashMap_Int)->Range(kMinValues, kMaxValues);
 
 void BM_Lookup_InlinedMap_Int(benchmark::State& state) {
-  InlinedHashMap<int, int, 8> map;
+  InlinedHashMap<int64_t, int64_t, 8> map;
   DoLookupIntTest(state, &map);
 }
 
 BENCHMARK(BM_Lookup_InlinedMap_Int)->Range(kMinValues, kMaxValues);
 
 void BM_Lookup_UnorderedMap_Int(benchmark::State& state) {
-  std::unordered_map<int, int> map;
+  std::unordered_map<int64_t, int64_t> map;
   DoLookupIntTest(state, &map);
 }
 
 BENCHMARK(BM_Lookup_UnorderedMap_Int)->Range(kMinValues, kMaxValues);
 
 void BM_Lookup_DenseHashMap_Int(benchmark::State& state) {
-  google::dense_hash_map<int, int> map;
+  google::dense_hash_map<int64_t, int64_t> map;
   map.set_empty_key(-1);
   map.set_deleted_key(-2);
   DoLookupIntTest(state, &map);

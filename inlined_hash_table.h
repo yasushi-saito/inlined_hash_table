@@ -63,6 +63,7 @@ class InlinedHashTableBucketMetadata {
     assert(index >= 0 && index < kMaskBits);
     return (mask_ & (1U << index)) != 0;
   }
+
   void SetLeaf(int index) {
     assert(!HasLeaf(index));
     mask_ |= (1U << index);
@@ -77,7 +78,7 @@ class InlinedHashTableBucketMetadata {
 
   void SetOrigin(int delta_from_origin) {
     assert(delta_from_origin < kMaskBits);
-    mask_ = (mask_ & ((1 << kMaskBits)-1)) |
+    mask_ = (mask_ & ((1 << kMaskBits) - 1)) |
             (static_cast<unsigned>(delta_from_origin + 1) << kMaskBits);
   }
 
@@ -157,13 +158,13 @@ class InlinedHashTable {
     Value* operator->() const { return &table_->Mutable(index_)->value; }
 
     iterator operator++() {  // ++it
-      index_ = table_->NextValidElementInArray(table_->array_, index_ + 1);
+      index_ = table_->array_.NextValidElement(index_ + 1);
       return *this;
     }
 
     iterator operator++(int unused) {  // it++
       iterator r(*this);
-      index_ = table_->NextValidElementInArray(table_->array_, index_ + 1);
+      index_ = table_->array_.NextValidElement(index_ + 1);
       return r;
     }
 
@@ -195,13 +196,13 @@ class InlinedHashTable {
     const Value* operator->() const { return &table_->Get(index_).value; }
 
     const_iterator operator++() {  // ++it
-      index_ = table_->NextValidElementInArray(table_->array_, index_ + 1);
+      index_ = table_->array_.NextValidElement(index_ + 1);
       return *this;
     }
 
     const_iterator operator++(int unused) {  // it++
       const_iterator r(*this);
-      index_ = table_->NextValidElementInArray(table_->array_, index_ + 1);
+      index_ = table_->array_.NextValidElement(index_ + 1);
       return r;
     }
 
@@ -213,14 +214,12 @@ class InlinedHashTable {
 
   // TODO(saito) Support const_iterator, cbegin, etc.
 
-  iterator begin() {
-    return iterator(this, NextValidElementInArray(array_, 0));
-  }
+  iterator begin() { return iterator(this, array_.NextValidElement(0)); }
 
   iterator end() { return iterator(nullptr, kEnd); }
 
   const_iterator cbegin() const {
-    return const_iterator(this, NextValidElementInArray(array_, 0));
+    return const_iterator(this, NextValidElement(array_, 0));
   }
   const_iterator cend() const { return const_iterator(nullptr, kEnd); }
 
@@ -277,7 +276,7 @@ class InlinedHashTable {
     Bucket* origin = array_.MutableBucket(array_.Clamp(itr.index_ - delta));
     origin->md.ClearLeaf(delta);
     --array_.size_;
-    return iterator(this, NextValidElementInArray(array_, itr.index_ + 1));
+    return iterator(this, array_.NextValidElement(itr.index_ + 1));
   }
 
   // If "k" exists in the table, erase it and return 1. Else return 0.
@@ -402,6 +401,22 @@ class InlinedHashTable {
       return i1 - i0 + capacity();
     }
 
+    // Find the first filled slot at or after "from". For incremenenting an
+    // iterator.
+    IndexType NextValidElement(IndexType from) const {
+      IndexType i = from;
+      for (;;) {
+        if (i >= capacity()) {
+          return kEnd;
+        }
+        const Bucket& bucket = GetBucket(i);
+        if (bucket.md.IsOccupied()) {
+          return i;
+        }
+        ++i;
+      }
+    }
+
     IndexType capacity_mask() const { return capacity_mask_; }
     IndexType capacity() const { return capacity_mask_ + 1; }
 
@@ -443,23 +458,7 @@ class InlinedHashTable {
            << static_cast<int>(std::ceil(std::log2(desired)));
   }
 
-  // Find the first filled slot at or after "from". For incremenenting an
-  // iterator.
-  IndexType NextValidElementInArray(const Array& array, IndexType from) const {
-    IndexType i = from;
-    for (;;) {
-      if (i >= array.capacity()) {
-        return kEnd;
-      }
-      const Bucket& bucket = array.GetBucket(i);
-      if (bucket.md.IsOccupied()) {
-        return i;
-      }
-      ++i;
-    }
-  }
-
-  static constexpr int MaxHopDistance() { return 27; }
+  static constexpr int MaxHopDistance() { return 8; }
   static constexpr int MaxAddDistance() { return 27; }
 
   // Either find "k" in the array, or find a slot into which "k" can be

@@ -2,7 +2,8 @@ cmake_minimum_required(VERSION 2.6)
 project(InlinedHashTable)
 find_package(GTest REQUIRED)
 include_directories(${GTEST_INCLUDE_DIRS})
-
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g -march=native")
+# set(CMAKE_CXX_COMPILER "/opt/clang+llvm-4.0.0-x86_64-linux-gnu-ubuntu-14.04/bin/clang++")
 include(ExternalProject)
 
 ExternalProject_Add (

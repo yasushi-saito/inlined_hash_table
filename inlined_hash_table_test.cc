@@ -3,20 +3,20 @@
 
 #define NDEBUG 1
 #include <chrono>
-#include <limits>
+#include <google/dense_hash_map>
 #include <iostream>
+#include <limits>
 #include <random>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
-#include <google/dense_hash_map>
 
 #include "benchmark/benchmark.h"
 #include "inlined_hash_table.h"
 
 extern "C" {
-  void ProfilerStart(const char* path);
-  void ProfilerStop();
+void ProfilerStart(const char* path);
+void ProfilerStop();
 }
 
 using Map = InlinedHashMap<std::string, std::string, 8>;
@@ -28,18 +28,18 @@ void InlinedHashTable<Key, Value, NumInlinedBuckets, Options, GetKey, Hash,
                       EqualTo, IndexType>::CheckConsistency() {
   const Array& array = array_;
   for (IndexType bi = 0; bi < array.capacity(); ++bi) {
-    const Bucket& bucket = GetBucket(array, bi);
+    const Bucket& bucket = array.GetBucket(bi);
 
     BucketMetadata::LeafIterator it(&bucket.md);
     int distance;
     while ((distance = it.Next()) >= 0) {
       const Bucket& leaf =
-          GetBucket(array, (bi + distance) & array.capacity_mask());
+          array.GetBucket((bi + distance) & array.capacity_mask());
       ASSERT_EQ(leaf.md.GetOrigin(), distance);
     }
     int o = bucket.md.GetOrigin();
     if (o >= 0) {
-      const Bucket& origin = GetBucket(array, (bi - o) & array.capacity_mask());
+      const Bucket& origin = array.GetBucket((bi - o) & array.capacity_mask());
       ASSERT_TRUE(origin.md.HasLeaf(o));
     }
   }
@@ -291,9 +291,11 @@ TEST(LeafIterator, Basic) {
 }
 
 #pragma GCC push_options
-#pragma GCC optimize ("O0")
+#pragma GCC optimize("O0")
 template <typename Value>
-void Callback(Value&v ) {}
+Value& Callback(Value& v) {
+  return v;
+}
 #pragma GCC pop_options
 
 std::vector<int> TestIntValues(int num_values) {
@@ -311,7 +313,7 @@ void DoInsertIntTest(benchmark::State& state, Map* map) {
   std::vector<int> values = TestIntValues(state.range(0));
   while (state.KeepRunning()) {
     for (int v : values) {
-      (*map)[v] = v + 1;
+      Callback((*map)[v]) = v + 1;
     }
   }
   Callback(*map);
@@ -353,7 +355,7 @@ void DoInsertStringTest(benchmark::State& state, Map* map) {
   while (state.KeepRunning()) {
     int n = 0;
     for (const auto& v : values) {
-      (*map)[v] = n++;;
+      Callback((*map)[v]) = n++;
     }
   }
   Callback(*map);
@@ -362,7 +364,7 @@ void DoInsertStringTest(benchmark::State& state, Map* map) {
 template <typename Map>
 void DoLookupStringTest(benchmark::State& state, Map* map) {
   std::vector<std::string> values = TestStringValues(state.range(0));
-  int n=0;
+  int n = 0;
   for (const auto& v : values) {
     (*map)[v] = n++;
   }
@@ -375,7 +377,7 @@ void DoLookupStringTest(benchmark::State& state, Map* map) {
 }
 
 int kMinValues = 4;
-int kMaxValues = 1024*1024;
+int kMaxValues = 1024 * 1024;
 
 void BM_Insert_InlinedMap_Int(benchmark::State& state) {
   InlinedHashMap<int, int, 8> map;

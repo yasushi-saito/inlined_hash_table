@@ -1,12 +1,15 @@
 
 #include <gtest/gtest.h>
 
+#define NDEBUG 1
 #include <chrono>
+#include <limits>
 #include <iostream>
 #include <random>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
+#include <google/dense_hash_map>
 
 #include "benchmark/benchmark.h"
 #include "inlined_hash_table.h"
@@ -284,68 +287,175 @@ TEST(LeafIterator, Basic) {
 
 const int kBenchmarkIters = 10000;
 
-std::vector<unsigned> TestValues() {
+#pragma GCC push_options
+#pragma GCC optimize ("O0")
+template <typename Value>
+void Callback(Value&v ) {}
+#pragma GCC pop_options
+
+std::vector<int> TestIntValues() {
   std::mt19937 rand(0);
-  std::vector<unsigned> values;
+  std::vector<int> values;
+  std::uniform_int_distribution<int> dist(0, std::numeric_limits<int>::max());
   for (int i = 0; i < kBenchmarkIters; ++i) {
-    values.push_back(rand());
+    values.push_back(dist(rand));
   }
   return values;
 }
 
 template <typename Map>
-void DoInsertTest(benchmark::State& state, Map* map) {
-  std::vector<unsigned> values = TestValues();
+void DoInsertIntTest(benchmark::State& state, Map* map) {
+  std::vector<int> values = TestIntValues();
   while (state.KeepRunning()) {
     for (unsigned v : values) {
       (*map)[v] = v + 1;
     }
   }
-  for (int i = 0; i < kBenchmarkIters; ++i) {
-    ASSERT_EQ((*map)[values[i]], values[i] + 1);
-  }
+  Callback(*map);
 }
-
-void BM_Insert_InlinedMap(benchmark::State& state) {
-  InlinedHashMap<unsigned, unsigned, 8> map;
-  DoInsertTest(state, &map);
-}
-BENCHMARK(BM_Insert_InlinedMap);
-
-void BM_Insert_UnorderedMap(benchmark::State& state) {
-  std::unordered_map<unsigned, unsigned> map;
-  DoInsertTest(state, &map);
-}
-BENCHMARK(BM_Insert_UnorderedMap);
 
 template <typename Map>
-void DoLookupTest(benchmark::State& state, Map* map) {
-  std::mt19937 rand(0);
-  std::vector<unsigned> values = TestValues();
+void DoLookupIntTest(benchmark::State& state, Map* map) {
+  std::vector<int> values = TestIntValues();
   for (unsigned v : values) {
     (*map)[v] = v + 1;
   }
 
   while (state.KeepRunning()) {
     for (unsigned v : values) {
-      ASSERT_EQ((*map)[v], v + 1);
+      Callback((*map)[v]);
     }
   }
 }
 
-void BM_Lookup_InlinedMap(benchmark::State& state) {
-  InlinedHashMap<unsigned, unsigned, 8> map;
-  DoLookupTest(state, &map);
+std::vector<std::string> TestStringValues() {
+  std::mt19937 rand(0);
+  std::vector<std::string> values;
+  std::uniform_int_distribution<int> length_dist(1, 128);
+  std::uniform_int_distribution<int> char_dist(0, 64);
+  for (int i = 0; i < kBenchmarkIters; ++i) {
+    int length = length_dist(rand);
+    std::string v;
+    for (int i = 0; i < length; ++i) {
+      v.append(1, ' ' + char_dist(rand));
+    }
+    values.push_back(v);
+  }
+  return values;
 }
 
-BENCHMARK(BM_Lookup_InlinedMap);
-
-void BM_Lookup_UnorderedMap(benchmark::State& state) {
-  std::unordered_map<unsigned, unsigned> map;
-  DoLookupTest(state, &map);
+template <typename Map>
+void DoInsertStringTest(benchmark::State& state, Map* map) {
+  std::vector<std::string> values = TestStringValues();
+  while (state.KeepRunning()) {
+    int n = 0;
+    for (const auto& v : values) {
+      (*map)[v] = n++;;
+    }
+  }
+  Callback(*map);
 }
 
-BENCHMARK(BM_Lookup_UnorderedMap);
+template <typename Map>
+void DoLookupStringTest(benchmark::State& state, Map* map) {
+  std::vector<std::string> values = TestStringValues();
+  int n=0;
+  for (const auto& v : values) {
+    (*map)[v] = n++;
+  }
+
+  while (state.KeepRunning()) {
+    for (const auto& v : values) {
+      Callback((*map)[v]);
+    }
+  }
+}
+
+void BM_Insert_InlinedMap_Int(benchmark::State& state) {
+  InlinedHashMap<int, int, 8> map;
+  DoInsertIntTest(state, &map);
+}
+BENCHMARK(BM_Insert_InlinedMap_Int);
+
+void BM_Insert_UnorderedMap_Int(benchmark::State& state) {
+  std::unordered_map<int, int> map;
+  DoInsertIntTest(state, &map);
+}
+BENCHMARK(BM_Insert_UnorderedMap_Int);
+
+void BM_Insert_DenseHashMap_Int(benchmark::State& state) {
+  google::dense_hash_map<int, int> map;
+  map.set_empty_key(-1);
+  map.set_deleted_key(-1);
+  DoInsertIntTest(state, &map);
+}
+BENCHMARK(BM_Insert_DenseHashMap_Int);
+
+void BM_Lookup_InlinedMap_Int(benchmark::State& state) {
+  InlinedHashMap<int, int, 8> map;
+  DoLookupIntTest(state, &map);
+}
+
+BENCHMARK(BM_Lookup_InlinedMap_Int);
+
+void BM_Lookup_UnorderedMap_Int(benchmark::State& state) {
+  std::unordered_map<int, int> map;
+  DoLookupIntTest(state, &map);
+}
+
+BENCHMARK(BM_Lookup_UnorderedMap_Int);
+
+void BM_Lookup_DenseHashMap_Int(benchmark::State& state) {
+  google::dense_hash_map<int, int> map;
+  map.set_empty_key(-1);
+  map.set_deleted_key(-2);
+  DoLookupIntTest(state, &map);
+}
+
+BENCHMARK(BM_Lookup_DenseHashMap_Int);
+
+void BM_Insert_InlinedMap_String(benchmark::State& state) {
+  InlinedHashMap<std::string, int, 8> map;
+  DoInsertStringTest(state, &map);
+}
+BENCHMARK(BM_Insert_InlinedMap_String);
+
+void BM_Insert_UnorderedMap_String(benchmark::State& state) {
+  std::unordered_map<std::string, int> map;
+  DoInsertStringTest(state, &map);
+}
+BENCHMARK(BM_Insert_UnorderedMap_String);
+
+void BM_Insert_DenseHashMap_String(benchmark::State& state) {
+  google::dense_hash_map<std::string, int> map;
+  map.set_empty_key("");
+  map.set_deleted_key("d");
+  DoInsertStringTest(state, &map);
+}
+BENCHMARK(BM_Insert_DenseHashMap_String);
+
+void BM_Lookup_InlinedMap_String(benchmark::State& state) {
+  InlinedHashMap<std::string, int, 8> map;
+  DoLookupStringTest(state, &map);
+}
+
+BENCHMARK(BM_Lookup_InlinedMap_String);
+
+void BM_Lookup_UnorderedMap_String(benchmark::State& state) {
+  std::unordered_map<std::string, int> map;
+  DoLookupStringTest(state, &map);
+}
+
+BENCHMARK(BM_Lookup_UnorderedMap_String);
+
+void BM_Lookup_DenseHashMap_String(benchmark::State& state) {
+  google::dense_hash_map<std::string, int> map;
+  map.set_empty_key("");
+  map.set_deleted_key("d");
+  DoLookupStringTest(state, &map);
+}
+
+BENCHMARK(BM_Lookup_DenseHashMap_String);
 
 int main(int argc, char** argv) {
   ::testing::InitGoogleTest(&argc, argv);

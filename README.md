@@ -11,6 +11,11 @@ but it should be faster (I'd hope).
 
 You need a C++-11 compiler. I tested using gcc-4.8/libstdc++ and clang-4.0/libc++.
 
+To run the test and benchmark, you need to install google sparsehash. For ubuntu, do:
+
+    sudo apt-get install libsparsehash-dev
+
+
 ## Installation
 
 The library consists of a single header file with no extra dependency. Just copy

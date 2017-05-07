@@ -22,9 +22,11 @@ set_property(
   benchmark/src/project_benchmark-build/src/libbenchmark.a)
 add_dependencies(benchmark project_benchmark)
 
+include_directories(benchmark/src/project_benchmark/include)
+link_directories(/home/saito/inlined_hash_table)
 add_executable(InlinedHashTableTest inlined_hash_table_test.cc)
 set_property(TARGET InlinedHashTableTest  PROPERTY CXX_STANDARD 11)
-include_directories(benchmark/src/project_benchmark/include)
 target_link_libraries(
   InlinedHashTableTest
+  tcmalloc_and_profiler
   benchmark ${GTEST_LIBRARIES} pthread)

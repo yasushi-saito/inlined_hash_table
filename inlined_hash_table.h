@@ -24,7 +24,7 @@
 
 class InlinedHashTableBucketMetadata {
  public:
-  InlinedHashTableBucketMetadata() : mask_(0), origin_(0) {}
+  InlinedHashTableBucketMetadata() : mask_(0), occupied_(0) {}
 
   class LeafIterator {
    public:
@@ -59,30 +59,26 @@ class InlinedHashTableBucketMetadata {
     mask_ &= ~(1U << index);
   }
 
-  bool IsOccupied() const { return origin_ != 0; }
-
-  void SetOrigin(int delta_from_origin) {
-    assert(delta_from_origin < kMaskBits);
-    origin_ = delta_from_origin + 1;
+  bool IsOccupied() const { return occupied_ != 0; }
+  void SetOccupied() {
+    assert(!IsOccupied());
+    occupied_ = 1;
   }
-
-  void ClearOrigin() { origin_ = 0; }
-
-  int GetOrigin() const {
-    if (origin_ == 0) return -1;
-    return origin_ - 1;
+  void ClearOccupied() {
+    assert(IsOccupied());
+    occupied_ = 0;
   }
 
   void ClearAll() {
     mask_ = 0;
-    origin_ = 0;
+    occupied_ = 0;
   }
 
  private:
-  static constexpr int kMaskBits = 27;
-  // Lower 27 bits is the mask, the upper 5 bits is the origin.
+  static constexpr int kMaskBits = 31;
+  // Lower 31 bits is the mask, the upper 5 bits is the origin.
   unsigned mask_ : kMaskBits;
-  unsigned origin_ : 32 - kMaskBits;
+  unsigned occupied_ : 1;
 };
 
 template <typename T>
@@ -332,13 +328,16 @@ class InlinedHashTable {
   // Erases the element pointed to by "i". Returns the iterator to the next
   // valid element.
   iterator erase(iterator itr) {
-    assert(itr.table_ == this);
     Bucket* bucket = array_.MutableBucket(itr.index_);
     assert(bucket->md.IsOccupied());
-    const int delta = bucket->md.GetOrigin();
-    bucket->md.ClearOrigin();
+    assert(itr.table_ == this);
+    size_t hash = hash_(get_key_.Get(bucket->value.Get()));
+    IndexType origin_index = array_.Clamp(hash);
+    Bucket* origin = array_.MutableBucket(origin_index);
+
+    bucket->md.ClearOccupied();
     bucket->value.Delete();
-    Bucket* origin = array_.MutableBucket(array_.Clamp(itr.index_ - delta));
+    int delta = array_.Distance(origin_index, itr.index_);
     origin->md.ClearLeaf(delta);
     --array_.size_;
     return iterator(this, array_.NextValidElement(itr.index_ + 1));
@@ -531,8 +530,8 @@ class InlinedHashTable {
            << static_cast<int>(std::ceil(std::log2(desired)));
   }
 
-  static constexpr int MaxHopDistance() { return 27; }
-  static constexpr int MaxAddDistance() { return 128; }
+  static constexpr int MaxHopDistance() { return 31; }
+  static constexpr int MaxAddDistance() { return 256; }
 
   // Either find "k" in the array, or find a slot into which "k" can be
   // inserted.
@@ -558,7 +557,7 @@ class InlinedHashTable {
       if (free_distance < MaxHopDistance()) {
         Bucket* free_bucket = array->MutableBucket(free_index);
         origin_bucket->md.SetLeaf(free_distance);
-        free_bucket->md.SetOrigin(free_distance);
+        free_bucket->md.SetOccupied();
         *index_found = free_index;
         return EMPTY_SLOT_FOUND;
       }
@@ -597,8 +596,8 @@ class InlinedHashTable {
       moved_bucket->md.SetLeaf(dist);
       moved_bucket->md.ClearLeaf(new_free_dist);
       free_bucket->value.New(std::move(*new_free_bucket->value.Mutable()));
-      free_bucket->md.SetOrigin(dist);
-      new_free_bucket->md.ClearOrigin();
+      free_bucket->md.SetOccupied();
+      new_free_bucket->md.ClearOccupied();
       return new_free_bucket_index;
     }
     return kEnd;

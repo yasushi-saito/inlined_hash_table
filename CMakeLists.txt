@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 2.6)
 project(InlinedHashTable)
 find_package(GTest REQUIRED)
 include_directories(${GTEST_INCLUDE_DIRS})
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g -O3 -std=c++1z -march=native")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g -std=c++1z -march=native")
 set(CMAKE_CXX_COMPILER "/opt/clang+llvm-4.0.0-x86_64-linux-gnu-ubuntu-14.04/bin/clang++")
 include(ExternalProject)
 
@@ -25,9 +25,9 @@ add_dependencies(benchmark project_benchmark)
 
 include_directories(benchmark/src/project_benchmark/include)
 link_directories(/home/saito/inlined_hash_table)
-add_executable(InlinedHashTableTest inlined_hash_table_test.cc)
+add_executable(inlined_hash_table_test inlined_hash_table_test.cc)
 
 target_link_libraries(
-  InlinedHashTableTest
+  inlined_hash_table_test
   tcmalloc_and_profiler
   benchmark ${GTEST_LIBRARIES} pthread)

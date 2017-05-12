@@ -13,6 +13,7 @@
 #include <unordered_set>
 
 #include "benchmark/benchmark.h"
+#include "hop_scotch_hash_table.h"
 #include "inlined_hash_table.h"
 
 extern "C" {
@@ -20,13 +21,24 @@ void ProfilerStart(const char* path);
 void ProfilerStop();
 }
 
-using Map = InlinedHashMap<std::string, std::string, 8>;
-using Set = InlinedHashSet<std::string, 8>;
+class InlinedHashOptions {
+ public:
+  const std::string& EmptyKey() const { return empty_key_; };
+  const std::string& DeletedKey() const { return deleted_key_; }
+
+ private:
+  std::string empty_key_;
+  std::string deleted_key_ = "xxx";
+};
+
+using InlinedHash =
+    InlinedHashMap<std::string, std::string, 8, InlinedHashOptions>;
+using HopScotchHash = HopScotchHashMap<std::string, std::string, 8>;
 
 template <typename Key, typename Value, int NumInlinedBuckets, typename GetKey,
           typename Hash, typename EqualTo, typename IndexType>
-void InlinedHashTable<Key, Value, NumInlinedBuckets, GetKey, Hash, EqualTo,
-                      IndexType>::CheckConsistency() {
+void HopScotchHashTable<Key, Value, NumInlinedBuckets, GetKey, Hash, EqualTo,
+                        IndexType>::CheckConsistency() {
   const Array& array = array_;
   for (IndexType bi = 0; bi < array.capacity(); ++bi) {
     const Bucket& bucket = array.GetBucket(bi);
@@ -49,53 +61,45 @@ void InlinedHashTable<Key, Value, NumInlinedBuckets, GetKey, Hash, EqualTo,
   }
 }
 
-TEST(InlinedHashMap, Simple) {
-  Map t;
-  EXPECT_EQ(8, t.capacity());
-  EXPECT_TRUE(t.empty());
-  EXPECT_TRUE(t.insert(std::make_pair("hello", "world")).second);
-  EXPECT_FALSE(t.empty());
-  EXPECT_EQ(1, t.size());
-  t.CheckConsistency();
-  auto it = t.begin();
+template <typename Map>
+class MapTest : public ::testing::Test {};
+
+typedef ::testing::Types<InlinedHash, HopScotchHash> MyTypes;
+
+TYPED_TEST_CASE(MapTest, MyTypes);
+
+TYPED_TEST(MapTest, Simple) {
+  TypeParam map;
+  EXPECT_EQ(8, map.capacity());
+  EXPECT_TRUE(map.empty());
+  EXPECT_TRUE(map.insert(std::make_pair("hello", "world")).second);
+  EXPECT_FALSE(map.empty());
+  EXPECT_EQ(1, map.size());
+  auto it = map.begin();
   EXPECT_EQ("hello", (*it).first);
   EXPECT_EQ("world", (*it).second);
   ++it;
-  EXPECT_TRUE(it == t.end());
-  EXPECT_EQ("world", t["hello"]);
+  EXPECT_TRUE(it == map.end());
+  EXPECT_EQ("world", map["hello"]);
 
-  t.erase("hello");
-  t.CheckConsistency();
-  EXPECT_TRUE(t.empty());
-  EXPECT_TRUE(t.find("hello") == t.end());
+  map.erase("hello");
+  EXPECT_TRUE(map.empty());
+  EXPECT_TRUE(map.find("hello") == map.end());
 }
 
-TEST(InlinedHashMap, EmptyInlinedPart) {
-  InlinedHashMap<std::string, std::string, 0> t;
-  EXPECT_EQ(0, t.capacity());
-  t["k"] = "v";
-  auto it = t.begin();
-  EXPECT_EQ("k", (*it).first);
-  EXPECT_EQ("v", (*it).second);
-  ++it;
-  EXPECT_TRUE(it == t.end());
-  t.CheckConsistency();
+TYPED_TEST(MapTest, Clear) {
+  TypeParam map;
+  map["h0"] = "w0";
+  map["h1"] = "w1";
+  map.clear();
+  EXPECT_TRUE(map.empty());
+  EXPECT_EQ(0, map.size());
+  EXPECT_TRUE(map.find("h0") == map.end());
+  EXPECT_TRUE(map.find("h1") == map.end());
 }
 
-TEST(InlinedHashMap, Clear) {
-  Map t;
-  t["h0"] = "w0";
-  t["h1"] = "w1";
-  t.clear();
-  EXPECT_TRUE(t.empty());
-  EXPECT_EQ(0, t.size());
-  EXPECT_TRUE(t.find("h0") == t.end());
-  EXPECT_TRUE(t.find("h1") == t.end());
-  t.CheckConsistency();
-}
-
-TEST(InlinedHashMap, Iterators) {
-  Map t;
+TYPED_TEST(MapTest, Iterators) {
+  TypeParam t;
   t["h0"] = "w0";
   t["h1"] = "w1";
   {
@@ -109,7 +113,7 @@ TEST(InlinedHashMap, Iterators) {
     EXPECT_EQ("w1", it->second);
   }
   {
-    Map::const_iterator it = t.begin();
+    typename TypeParam::const_iterator it = t.begin();
     EXPECT_EQ("h0", it->first);
     EXPECT_EQ("w0", it->second);
     auto it2 = it++;
@@ -120,50 +124,48 @@ TEST(InlinedHashMap, Iterators) {
   }
 }
 
-TEST(InlinedHashMap, Copy) {
-  Map t;
+TYPED_TEST(MapTest, Copy) {
+  TypeParam t;
   t["h0"] = "w0";
-  Map t2 = t;
+  TypeParam t2 = t;
   EXPECT_FALSE(t2.empty());
   EXPECT_EQ(1, t2.size());
   EXPECT_FALSE(t.empty());
   EXPECT_EQ(1, t.size());
   EXPECT_EQ(t2["h0"], "w0");
   EXPECT_EQ(t["h0"], "w0");
-  t.CheckConsistency();
-  t2.CheckConsistency();
 }
 
-TEST(InlinedHashMap, Move) {
-  Map t;
+TYPED_TEST(MapTest, Move) {
+  TypeParam t;
   t["h0"] = "w0";
-  Map t2 = std::move(t);
+  TypeParam t2 = std::move(t);
   EXPECT_FALSE(t2.empty());
   EXPECT_EQ(1, t2.size());
   EXPECT_EQ(t2["h0"], "w0");
   EXPECT_TRUE(t.empty());
   EXPECT_TRUE(t.find("h0") == t.end());
-  t.CheckConsistency();
-  t2.CheckConsistency();
 }
 
-TEST(InlinedHashSet, Random) {
-  InlinedHashSet<int, 8> t;
-  std::unordered_set<int> model;
+TYPED_TEST(MapTest, Random) {
+  TypeParam t;
+  std::unordered_map<std::string, std::string> model;
 
   std::mt19937 rand(0);
   for (int i = 0; i < 100000; ++i) {
     int op = rand() % 100;
     if (op < 50) {
-      int n = rand() % 100;
+      std::string n = std::to_string(rand() % 100);
       // std::cout << i << ": Insert " << n << "\n";
-      ASSERT_EQ(t.insert(n).second, model.insert(n).second);
+      ASSERT_EQ(t.insert(std::make_pair(n, n)).second,
+                model.insert(std::make_pair(n, n)).second)
+          << i;
     } else if (op < 70) {
-      int n = rand() % 100;
+      std::string n = std::to_string(rand() % 100);
       // std::cout << i << ": Erase " << n << "\n";
       ASSERT_EQ(t.erase(n), model.erase(n));
     } else if (op < 99) {
-      int n = rand() % 100;
+      std::string n = std::to_string(rand() % 100);
       ASSERT_EQ(t.find(n) == t.end(), model.find(n) == model.end());
     } else {
       t.clear();
@@ -171,40 +173,34 @@ TEST(InlinedHashSet, Random) {
     }
     ASSERT_EQ(t.size(), model.size());
     ASSERT_EQ(t.empty(), model.empty());
-    std::set<int> elems_in_t(t.begin(), t.end());
-    std::set<int> elems_in_model(model.begin(), model.end());
+    std::set<std::string> elems_in_t;
+    for (const auto& p : t) elems_in_t.insert(p.first);
+    std::set<std::string> elems_in_model;
+    for (const auto& p : model) elems_in_model.insert(p.first);
     ASSERT_EQ(elems_in_t, elems_in_model) << i;
-    t.CheckConsistency();
   }
 }
 
-TEST(InlinedHashSet, ManyInserts) {
-  InlinedHashMap<unsigned, unsigned, 8> t;
+TYPED_TEST(MapTest, ManyInserts) {
+  TypeParam t;
   {
     std::mt19937 rand(0);
     for (int i = 0; i < 10000; ++i) {
       unsigned r = rand();
-      if (i == 368 || r == 3598945970) {
-        std::cout << i << ": insert " << r << "\n";
-      }
-      t[r] = r + 1;
-      t.CheckConsistency();
+      t[std::to_string(r)] = std::to_string(r + 1);
     }
   }
   {
     std::mt19937 rand(0);
     for (int i = 0; i < 10000; ++i) {
       unsigned r = rand();
-      if (r == 3598945970) {
-        std::cout << i << ": lookup " << r << "\n";
-      }
-      ASSERT_EQ(r + 1, t[r]) << i;
+      ASSERT_EQ(std::to_string(r + 1), t[std::to_string(r)]) << i;
     }
   }
 }
 
 TEST(ManualConstructor, String) {
-  InlinedHashTableManualConstructor<std::string> m;
+  HopScotchHashTableManualConstructor<std::string> m;
   static_assert(sizeof(m) == sizeof(std::string), "size");
   m.New("foobar");
   EXPECT_EQ(m.Get(), "foobar");
@@ -214,7 +210,7 @@ TEST(ManualConstructor, String) {
 }
 
 TEST(ManualConstructor, Int) {
-  InlinedHashTableManualConstructor<int> m;
+  HopScotchHashTableManualConstructor<int> m;
   static_assert(sizeof(m) == sizeof(int), "size");
   m.New(4);
   EXPECT_EQ(m.Get(), 4);
@@ -224,7 +220,7 @@ TEST(ManualConstructor, Int) {
 }
 
 TEST(LeafIterator, Basic) {
-  InlinedHashTableBucketMetadata md;
+  HopScotchHashTableBucketMetadata md;
   md.SetLeaf(0);
   md.SetLeaf(1);
   md.SetLeaf(5);
@@ -232,7 +228,7 @@ TEST(LeafIterator, Basic) {
   md.SetLeaf(9);
   md.SetLeaf(21);
 
-  InlinedHashTableBucketMetadata::LeafIterator it(&md);
+  HopScotchHashTableBucketMetadata::LeafIterator it(&md);
   ASSERT_EQ(it.Next(), 0);
   ASSERT_EQ(it.Next(), 1);
   ASSERT_EQ(it.Next(), 5);
@@ -334,9 +330,9 @@ int kMinValues = 4;
 int kMaxValues = 1024 * 1024;
 
 template <typename Key>
-std::unique_ptr<InlinedHashMap<Key, int64_t, 0>> NewInlinedHashMap() {
-  return std::unique_ptr<InlinedHashMap<Key, int64_t, 0>>(
-      new InlinedHashMap<Key, int64_t, 0>);
+std::unique_ptr<HopScotchHashMap<Key, int64_t, 0>> NewHopScotchHashMap() {
+  return std::unique_ptr<HopScotchHashMap<Key, int64_t, 0>>(
+      new HopScotchHashMap<Key, int64_t, 0>);
 }
 
 template <typename Key>
@@ -361,10 +357,10 @@ std::unique_ptr<google::dense_hash_map<Key, int64_t>> NewDenseHashMap() {
   return map;
 }
 
-void BM_Insert_InlinedMap_Int(benchmark::State& state) {
-  DoInsertTest<int>(state, []() { return NewInlinedHashMap<int>(); });
+void BM_Insert_HopScotchMap_Int(benchmark::State& state) {
+  DoInsertTest<int>(state, []() { return NewHopScotchHashMap<int>(); });
 }
-BENCHMARK(BM_Insert_InlinedMap_Int)->Range(kMinValues, kMaxValues);
+BENCHMARK(BM_Insert_HopScotchMap_Int)->Range(kMinValues, kMaxValues);
 
 void BM_Insert_UnorderedMap_Int(benchmark::State& state) {
   DoInsertTest<int>(state, []() { return NewUnorderedMap<int>(); });
@@ -376,11 +372,11 @@ void BM_Insert_DenseHashMap_Int(benchmark::State& state) {
 }
 BENCHMARK(BM_Insert_DenseHashMap_Int)->Range(kMinValues, kMaxValues);
 
-void BM_Lookup_InlinedMap_Int(benchmark::State& state) {
-  DoLookupTest<int>(state, NewInlinedHashMap<int>());
+void BM_Lookup_HopScotchMap_Int(benchmark::State& state) {
+  DoLookupTest<int>(state, NewHopScotchHashMap<int>());
 }
 
-BENCHMARK(BM_Lookup_InlinedMap_Int)->Range(kMinValues, kMaxValues);
+BENCHMARK(BM_Lookup_HopScotchMap_Int)->Range(kMinValues, kMaxValues);
 
 void BM_Lookup_UnorderedMap_Int(benchmark::State& state) {
   DoLookupTest<int>(state, NewUnorderedMap<int>());
@@ -394,11 +390,11 @@ void BM_Lookup_DenseHashMap_Int(benchmark::State& state) {
 
 BENCHMARK(BM_Lookup_DenseHashMap_Int)->Range(kMinValues, kMaxValues);
 
-void BM_Insert_InlinedMap_String(benchmark::State& state) {
-  DoInsertTest<std::string>(state,
-                            []() { return NewInlinedHashMap<std::string>(); });
+void BM_Insert_HopScotchMap_String(benchmark::State& state) {
+  DoInsertTest<std::string>(
+      state, []() { return NewHopScotchHashMap<std::string>(); });
 }
-BENCHMARK(BM_Insert_InlinedMap_String)->Range(kMinValues, kMaxValues);
+BENCHMARK(BM_Insert_HopScotchMap_String)->Range(kMinValues, kMaxValues);
 
 void BM_Insert_UnorderedMap_String(benchmark::State& state) {
   DoInsertTest<std::string>(state,
@@ -413,11 +409,11 @@ void BM_Insert_DenseHashMap_String(benchmark::State& state) {
 }
 BENCHMARK(BM_Insert_DenseHashMap_String)->Range(kMinValues, kMaxValues);
 
-void BM_Lookup_InlinedMap_String(benchmark::State& state) {
-  DoLookupTest<std::string>(state, NewInlinedHashMap<std::string>());
+void BM_Lookup_HopScotchMap_String(benchmark::State& state) {
+  DoLookupTest<std::string>(state, NewHopScotchHashMap<std::string>());
 }
 
-BENCHMARK(BM_Lookup_InlinedMap_String)->Range(kMinValues, kMaxValues);
+BENCHMARK(BM_Lookup_HopScotchMap_String)->Range(kMinValues, kMaxValues);
 
 void BM_Lookup_UnorderedMap_String(benchmark::State& state) {
   DoLookupTest<std::string>(state, NewUnorderedMap<std::string>());

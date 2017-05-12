@@ -11,7 +11,7 @@
 #include <memory>
 #include <type_traits>
 
-// InlinedHashTable is an implementation detail that underlies InlinedHashMap
+// HopScotchHashTable is an implementation detail that underlies InlinedHashMap
 // and InlinedHashSet. It's not for public use.
 //
 // NumInlinedBuckets is the number of elements stored in-line with the table.
@@ -22,13 +22,13 @@
 //
 // TODO: implement bucket reservation.
 
-class InlinedHashTableBucketMetadata {
+class HopScotchHashTableBucketMetadata {
  public:
-  InlinedHashTableBucketMetadata() : mask_(0), occupied_(0) {}
+  HopScotchHashTableBucketMetadata() : mask_(0), occupied_(0) {}
 
   class LeafIterator {
    public:
-    explicit LeafIterator(const InlinedHashTableBucketMetadata* md)
+    explicit LeafIterator(const HopScotchHashTableBucketMetadata* md)
         : mask_(md->mask_), base_(-1) {}
     int Next() {
       int i = __builtin_ffs(mask_);
@@ -82,9 +82,9 @@ class InlinedHashTableBucketMetadata {
 };
 
 template <typename T>
-class __attribute((aligned(sizeof(T)))) InlinedHashTableManualConstructor {
+class __attribute((aligned(sizeof(T)))) HopScotchHashTableManualConstructor {
  public:
-  InlinedHashTableManualConstructor() {}
+  HopScotchHashTableManualConstructor() {}
 
   T* Mutable() { return reinterpret_cast<T*>(buf_); }
 
@@ -105,20 +105,20 @@ class __attribute((aligned(sizeof(T)))) InlinedHashTableManualConstructor {
   void Delete() { Mutable()->~T(); }
 
  private:
-  InlinedHashTableManualConstructor(const InlinedHashTableManualConstructor&) =
+  HopScotchHashTableManualConstructor(const HopScotchHashTableManualConstructor&) =
       delete;
-  void operator=(const InlinedHashTableManualConstructor&) = delete;
+  void operator=(const HopScotchHashTableManualConstructor&) = delete;
   uint8_t buf_[sizeof(T)];
 };
 
 template <typename Key, typename Value, int NumInlinedBuckets, typename GetKey,
           typename Hash, typename EqualTo, typename IndexType>
-class InlinedHashTable {
+class HopScotchHashTable {
  public:
-  using BucketMetadata = InlinedHashTableBucketMetadata;
+  using BucketMetadata = HopScotchHashTableBucketMetadata;
   struct Bucket {
     BucketMetadata md;
-    InlinedHashTableManualConstructor<Value> value;
+    HopScotchHashTableManualConstructor<Value> value;
 
     Bucket() {}
     ~Bucket() {
@@ -167,27 +167,27 @@ class InlinedHashTable {
   };
   static_assert((NumInlinedBuckets & (NumInlinedBuckets - 1)) == 0,
                 "NumInlinedBuckets must be a power of two");
-  InlinedHashTable(IndexType bucket_count, const Hash& hash,
+  HopScotchHashTable(IndexType bucket_count, const Hash& hash,
                    const EqualTo& equal_to)
       : hash_(hash),
         equal_to_(equal_to),
         array_(ComputeCapacity(bucket_count)) {}
 
-  InlinedHashTable(const InlinedHashTable& other) : array_(NumInlinedBuckets) {
+  HopScotchHashTable(const HopScotchHashTable& other) : array_(NumInlinedBuckets) {
     *this = other;
   }
-  InlinedHashTable(InlinedHashTable&& other) : array_(NumInlinedBuckets) {
+  HopScotchHashTable(HopScotchHashTable&& other) : array_(NumInlinedBuckets) {
     *this = std::move(other);
   }
 
-  InlinedHashTable& operator=(const InlinedHashTable& other) {
+  HopScotchHashTable& operator=(const HopScotchHashTable& other) {
     array_ = other.array_;
     get_key_ = other.get_key_;
     hash_ = other.hash_;
     equal_to_ = other.equal_to_;
     return *this;
   }
-  InlinedHashTable& operator=(InlinedHashTable&& other) {
+  HopScotchHashTable& operator=(HopScotchHashTable&& other) {
     array_ = std::move(other.array_);
     get_key_ = std::move(other.get_key_);
     hash_ = std::move(other.hash_);
@@ -197,7 +197,7 @@ class InlinedHashTable {
 
   class iterator {
    public:
-    using Table = InlinedHashTable<Key, Value, NumInlinedBuckets, GetKey, Hash,
+    using Table = HopScotchHashTable<Key, Value, NumInlinedBuckets, GetKey, Hash,
                                    EqualTo, IndexType>;
     iterator(Table* table, IndexType index) : table_(table), index_(index) {}
     iterator(const typename Table::iterator& i)
@@ -235,7 +235,7 @@ class InlinedHashTable {
 
   class const_iterator {
    public:
-    using Table = InlinedHashTable<Key, Value, NumInlinedBuckets, GetKey, Hash,
+    using Table = HopScotchHashTable<Key, Value, NumInlinedBuckets, GetKey, Hash,
                                    EqualTo, IndexType>;
     const_iterator() {}
     const_iterator(const Table::iterator& i)
@@ -644,7 +644,7 @@ class InlinedHashTable {
 template <typename Key, typename Value, int NumInlinedBuckets,
           typename Hash = std::hash<Key>, typename EqualTo = std::equal_to<Key>,
           typename IndexType = size_t>
-class InlinedHashMap {
+class HopScotchHashMap {
  public:
   using BucketValue = std::pair<Key, Value>;
   using value_type = BucketValue;
@@ -652,13 +652,13 @@ class InlinedHashMap {
     const Key& Get(const BucketValue& elem) const { return elem.first; }
     Key* Mutable(BucketValue* elem) const { return &elem->first; }
   };
-  using Table = InlinedHashTable<Key, BucketValue, NumInlinedBuckets, GetKey,
+  using Table = HopScotchHashTable<Key, BucketValue, NumInlinedBuckets, GetKey,
                                  Hash, EqualTo, IndexType>;
   using iterator = typename Table::iterator;
   using const_iterator = typename Table::const_iterator;
 
-  InlinedHashMap() : impl_(0, Hash(), EqualTo()) {}
-  InlinedHashMap(IndexType bucket_count, const Hash& hash = Hash(),
+  HopScotchHashMap() : impl_(0, Hash(), EqualTo()) {}
+  HopScotchHashMap(IndexType bucket_count, const Hash& hash = Hash(),
                  const EqualTo& equal_to = EqualTo())
       : impl_(bucket_count, hash, equal_to) {}
 
@@ -704,10 +704,10 @@ class InlinedHashMap {
 template <typename Value, int NumInlinedBuckets,
           typename Hash = std::hash<Value>,
           typename EqualTo = std::equal_to<Value>, typename IndexType = size_t>
-class InlinedHashSet {
+class HopScotchHashSet {
  public:
   struct Bucket {
-    InlinedHashTableBucketMetadata md;
+    HopScotchHashTableBucketMetadata md;
     Value value;
   };
 
@@ -715,13 +715,13 @@ class InlinedHashSet {
     const Value& Get(const Value& elem) const { return elem; }
     Value* Mutable(Value* elem) const { return elem; }
   };
-  using Table = InlinedHashTable<Value, Value, NumInlinedBuckets, GetKey, Hash,
+  using Table = HopScotchHashTable<Value, Value, NumInlinedBuckets, GetKey, Hash,
                                  EqualTo, IndexType>;
   using iterator = typename Table::iterator;
   using const_iterator = typename Table::const_iterator;
 
-  InlinedHashSet() : impl_(0, Hash(), EqualTo()) {}
-  InlinedHashSet(IndexType bucket_count, const Hash& hash = Hash(),
+  HopScotchHashSet() : impl_(0, Hash(), EqualTo()) {}
+  HopScotchHashSet(IndexType bucket_count, const Hash& hash = Hash(),
                  const EqualTo& equal_to = EqualTo())
       : impl_(bucket_count, hash, equal_to) {}
   bool empty() const { return impl_.empty(); }

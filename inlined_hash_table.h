@@ -3,8 +3,8 @@
 #pragma once
 
 #include <array>
-#include <cmath>
 #include <cassert>
+#include <cmath>
 #include <functional>
 #include <limits>
 #include <memory>
@@ -395,9 +395,13 @@ class InlinedHashTable {
   // Either find "k" in the array, or find a slot into which "k" can be
   // inserted.
   InsertResult InsertInArray(Array* array, const Key& k, IndexType* index) {
+    constexpr IndexType kInvalidIndex = std::numeric_limits<IndexType>::max();
+
     if (array->capacity == 0) return ARRAY_FULL;
     *index = ComputeHash(k) & (array->capacity - 1);
     const IndexType start_index = *index;
+    bool found_empty_slot = false;
+    IndexType empty_index = kInvalidIndex;
     for (int retries = 1;; ++retries) {
       const Elem& elem = ArraySlot(*array, *index);
       const Key& key = ExtractKey(elem);
@@ -405,15 +409,18 @@ class InlinedHashTable {
         return KEY_FOUND;
       }
       if (IsDeletedKey(key)) {
-        return EMPTY_SLOT_FOUND;
-      }
-      if (IsEmptyKey(key)) {
-        if (array->num_empty_slots < array->capacity * (1 - MaxLoadFactor())) {
-          return ARRAY_FULL;
-        } else {
+        if (empty_index == kInvalidIndex) empty_index = *index;
+      } else if (IsEmptyKey(key)) {
+        if (empty_index != kInvalidIndex) {
+          // Found a deleted slot earlier. Take it.
+          *index = empty_index;
+          return EMPTY_SLOT_FOUND;
+        }
+        if (array->num_empty_slots >= array->capacity * (1 - MaxLoadFactor())) {
           --array->num_empty_slots;
           return EMPTY_SLOT_FOUND;
         }
+        return ARRAY_FULL;
       }
       if (retries > array->capacity) {
         return ARRAY_FULL;
@@ -421,12 +428,12 @@ class InlinedHashTable {
       *index = QuadraticProbe(*array, *index, retries);
     }
   }
-
   // Rehash the hash table. "delta" is the number of elements to add to the
   // current table. It's used to compute the capacity of the new table.  Culls
   // tombstones and move all the existing elements and
   void ExpandTable(IndexType delta) {
     const IndexType new_capacity = ComputeCapacity(array_.size + delta);
+    // std::cout << "Expand: " << new_capacity << "\n";
     Array new_array(new_capacity);
     InitArray(options_.EmptyKey(), &new_array);
     for (Elem& e : *this) {

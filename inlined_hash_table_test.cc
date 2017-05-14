@@ -21,7 +21,11 @@ void ProfilerStart(const char* path);
 void ProfilerStop();
 }
 
-class InlinedHashOptions {
+template <typename Key>
+class MapOptions {};
+
+template <>
+class MapOptions<std::string> {
  public:
   const std::string& EmptyKey() const { return empty_key_; };
   const std::string& DeletedKey() const { return deleted_key_; }
@@ -31,8 +35,15 @@ class InlinedHashOptions {
   std::string deleted_key_ = "xxx";
 };
 
+template <>
+class MapOptions<int> {
+ public:
+  int EmptyKey() const { return -1; };
+  int DeletedKey() const { return -2; }
+};
+
 using InlinedHash =
-    InlinedHashMap<std::string, std::string, 8, InlinedHashOptions>;
+    InlinedHashMap<std::string, std::string, 8, MapOptions<std::string>>;
 using HopScotchHash = HopScotchHashMap<std::string, std::string, 8>;
 
 template <typename Key, typename Value, int NumInlinedBuckets, typename GetKey,
@@ -336,6 +347,13 @@ std::unique_ptr<HopScotchHashMap<Key, int64_t, 0>> NewHopScotchHashMap() {
 }
 
 template <typename Key>
+std::unique_ptr<InlinedHashMap<Key, int64_t, 8, MapOptions<Key>>>
+NewInlinedHashMap() {
+  return std::unique_ptr<InlinedHashMap<Key, int64_t, 8, MapOptions<Key>>>(
+      new InlinedHashMap<Key, int64_t, 8, MapOptions<Key>>);
+}
+
+template <typename Key>
 std::unique_ptr<std::unordered_map<Key, int64_t>> NewUnorderedMap() {
   return std::unique_ptr<std::unordered_map<Key, int64_t>>(
       new std::unordered_map<Key, int64_t>);
@@ -352,7 +370,7 @@ std::unique_ptr<google::dense_hash_map<Key, int64_t>> NewDenseHashMap() {
     }
   else {
     map->set_empty_key(-1);
-    map->set_deleted_key(-1);
+    map->set_deleted_key(-2);
   }
   return map;
 }
@@ -361,6 +379,11 @@ void BM_Insert_HopScotchMap_Int(benchmark::State& state) {
   DoInsertTest<int>(state, []() { return NewHopScotchHashMap<int>(); });
 }
 BENCHMARK(BM_Insert_HopScotchMap_Int)->Range(kMinValues, kMaxValues);
+
+void BM_Insert_InlinedMap_Int(benchmark::State& state) {
+  DoInsertTest<int>(state, []() { return NewInlinedHashMap<int>(); });
+}
+BENCHMARK(BM_Insert_InlinedMap_Int)->Range(kMinValues, kMaxValues);
 
 void BM_Insert_UnorderedMap_Int(benchmark::State& state) {
   DoInsertTest<int>(state, []() { return NewUnorderedMap<int>(); });
@@ -375,8 +398,12 @@ BENCHMARK(BM_Insert_DenseHashMap_Int)->Range(kMinValues, kMaxValues);
 void BM_Lookup_HopScotchMap_Int(benchmark::State& state) {
   DoLookupTest<int>(state, NewHopScotchHashMap<int>());
 }
-
 BENCHMARK(BM_Lookup_HopScotchMap_Int)->Range(kMinValues, kMaxValues);
+
+void BM_Lookup_InlinedMap_Int(benchmark::State& state) {
+  DoLookupTest<int>(state, NewInlinedHashMap<int>());
+}
+BENCHMARK(BM_Lookup_InlinedMap_Int)->Range(kMinValues, kMaxValues);
 
 void BM_Lookup_UnorderedMap_Int(benchmark::State& state) {
   DoLookupTest<int>(state, NewUnorderedMap<int>());

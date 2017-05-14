@@ -375,7 +375,6 @@ class InlinedHashTable {
   bool FindInArray(const Array& array, const Key& k, IndexType* index) const {
     if (array.capacity == 0) return false;
     *index = ComputeHash(k) & (array.capacity - 1);
-    const IndexType start_index = *index;
     for (int retries = 1;; ++retries) {
       const Elem& elem = ArraySlot(array, *index);
       const Key& key = ExtractKey(elem);
@@ -483,7 +482,7 @@ class InlinedHashTable {
     return options->MaxLoadFactor();
   }
 
-  static auto SfinaeMaxLoadFactor(...) -> double { return 0.75; }
+  static auto SfinaeMaxLoadFactor(...) -> double { return 0.5; }
 
   bool IsDeletedKey(const Key& k) const {
     // return KeysEqual(options_.DeletedKey(), k);

@@ -347,10 +347,10 @@ std::unique_ptr<HopScotchHashMap<Key, int64_t, 0>> NewHopScotchHashMap() {
 }
 
 template <typename Key>
-std::unique_ptr<InlinedHashMap<Key, int64_t, 8, MapOptions<Key>>>
+std::unique_ptr<InlinedHashMap<Key, int64_t, 0, MapOptions<Key>>>
 NewInlinedHashMap() {
-  return std::unique_ptr<InlinedHashMap<Key, int64_t, 8, MapOptions<Key>>>(
-      new InlinedHashMap<Key, int64_t, 8, MapOptions<Key>>);
+  return std::unique_ptr<InlinedHashMap<Key, int64_t, 0, MapOptions<Key>>>(
+      new InlinedHashMap<Key, int64_t, 0, MapOptions<Key>>);
 }
 
 template <typename Key>
@@ -423,6 +423,12 @@ void BM_Insert_HopScotchMap_String(benchmark::State& state) {
 }
 BENCHMARK(BM_Insert_HopScotchMap_String)->Range(kMinValues, kMaxValues);
 
+void BM_Insert_InlinedHashMap_String(benchmark::State& state) {
+  DoInsertTest<std::string>(state,
+                            []() { return NewInlinedHashMap<std::string>(); });
+}
+BENCHMARK(BM_Insert_InlinedHashMap_String)->Range(kMinValues, kMaxValues);
+
 void BM_Insert_UnorderedMap_String(benchmark::State& state) {
   DoInsertTest<std::string>(state,
                             []() { return NewUnorderedMap<std::string>(); });
@@ -441,6 +447,12 @@ void BM_Lookup_HopScotchMap_String(benchmark::State& state) {
 }
 
 BENCHMARK(BM_Lookup_HopScotchMap_String)->Range(kMinValues, kMaxValues);
+
+void BM_Lookup_InlinedHashMap_String(benchmark::State& state) {
+  DoLookupTest<std::string>(state, NewInlinedHashMap<std::string>());
+}
+
+BENCHMARK(BM_Lookup_InlinedHashMap_String)->Range(kMinValues, kMaxValues);
 
 void BM_Lookup_UnorderedMap_String(benchmark::State& state) {
   DoLookupTest<std::string>(state, NewUnorderedMap<std::string>());

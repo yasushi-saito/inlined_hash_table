@@ -44,35 +44,68 @@ class InlinedHashTable {
                 "NumInlinedElements must be a power of two");
   InlinedHashTable(IndexType bucket_count, const Options& options,
                    const Hash& hash, const EqualTo& equal_to)
-      : options_(options),
+      : size_(0),
+        num_empty_slots_(ComputeCapacity(bucket_count)),
+        capacity_mask_(num_empty_slots_ - 1),
+        options_(options),
         hash_(hash),
-        equal_to_(equal_to),
-        array_(ComputeCapacity(bucket_count)) {
-    InitArray(options_.EmptyKey(), &array_);
+        equal_to_(equal_to) {
+    assert((capacity & capacity_mask_) == 0);
+    for (Elem& elem : inlined_) {
+      *ExtractMutableKey(&elem) = options_.EmptyKey();
+    }
+    if (Capacity() > inlined_.size()) {
+      const IndexType n = Capacity() - inlined_.size();
+      outlined_.reset(new Elem[n]);
+      for (IndexType i = 0; i < n; ++i) {
+        *ExtractMutableKey(&outlined_[i]) = options_.EmptyKey();
+      }
+    }
   }
 
-  InlinedHashTable(const InlinedHashTable& other) : array_(NumInlinedElements) {
-    *this = other;
-  }
-  InlinedHashTable(InlinedHashTable&& other) : array_(NumInlinedElements) {
-    *this = std::move(other);
-  }
+  InlinedHashTable(const InlinedHashTable& other) { *this = other; }
+  InlinedHashTable(InlinedHashTable&& other) { *this = std::move(other); }
 
   InlinedHashTable& operator=(const InlinedHashTable& other) {
-    array_ = other.array_;
-    options_ = other.options_;
-    get_key_ = other.get_key_;
-    hash_ = other.hash_;
-    equal_to_ = other.equal_to_;
+    size_ = other.size_;
+    capacity_mask_ = other.capacity_mask_;
+    num_empty_slots_ = other.num_empty_slots_;
+    inlined_ = other.inlined_;
+    if (other.outlined_ != nullptr) {
+      const size_t n = other.capacity() - inlined_.size();
+      outlined_.reset(new Elem[n]);
+      std::copy(&other.outlined_[0], &other.outlined_[n], &outlined_[0]);
+    }
     return *this;
   }
+
   InlinedHashTable& operator=(InlinedHashTable&& other) {
-    array_ = std::move(other.array_);
-    options_ = std::move(other.options_);
-    get_key_ = std::move(other.get_key_);
-    hash_ = std::move(other.hash_);
-    equal_to_ = std::move(other.equal_to_);
+    size_ = other.size_;
+    capacity_mask_ = other.capacity_mask_;
+    num_empty_slots_ = other.num_empty_slots_;
+    inlined_ = std::move(other.inlined_);
+    outlined_ = std::move(other.outlined_);
+
+    other.outlined_.reset();
+    other.size_ = 0;
+    other.num_empty_slots_ = 0;
+    other.capacity_mask_ = other.inlined_.size() - 1;
     return *this;
+  }
+
+  void MoveFrom(InlinedHashTable&& other) {
+    assert(size_ == 0);
+    for (Elem& e : other) {
+      IndexType index;
+      const Key& key = ExtractKey(e);
+      if (IsEmptyKey(key) || IsDeletedKey(key)) continue;
+      if (FindInArray(ExtractKey(e), &index)) {
+        abort();
+      }
+      *MutableElem(index) = std::move(e);
+      --num_empty_slots_;
+    }
+    size_ = other.size_;
   }
 
   class iterator {
@@ -89,17 +122,17 @@ class InlinedHashTable {
       return index_ != other.index_;
     }
 
-    Elem& operator*() const { return *table_->Mutable(index_); }
-    Elem* operator->() const { return table_->Mutable(index_); }
+    Elem& operator*() const { return *table_->MutableElem(index_); }
+    Elem* operator->() const { return table_->MutableElem(index_); }
 
     iterator operator++() {  // ++it
-      index_ = table_->NextValidElementInArray(table_->array_, index_ + 1);
+      index_ = table_->NextValidElementInArray(index_ + 1);
       return *this;
     }
 
     iterator operator++(int unused) {  // it++
       iterator r(*this);
-      index_ = table_->NextValidElementInArray(table_->array_, index_ + 1);
+      index_ = table_->NextValidElementInArray(index_ + 1);
       return r;
     }
 
@@ -127,8 +160,8 @@ class InlinedHashTable {
       return index_ != other.index_;
     }
 
-    const Elem& operator*() const { return table_->Get(index_); }
-    const Elem* operator->() const { return &table_->Get(index_); }
+    const Elem& operator*() const { return table_->GetElem(index_); }
+    const Elem* operator->() const { return &table_->GetElem(index_); }
 
     const_iterator operator++() {  // ++it
       index_ = table_->NextValidElementInArray(table_->array_, index_ + 1);
@@ -137,7 +170,7 @@ class InlinedHashTable {
 
     const_iterator operator++(int unused) {  // it++
       const_iterator r(*this);
-      index_ = table_->NextValidElementInArray(table_->array_, index_ + 1);
+      index_ = table_->NextValidElementInArray(index_ + 1);
       return r;
     }
 
@@ -147,25 +180,18 @@ class InlinedHashTable {
     IndexType index_;
   };
 
-  // TODO(saito) Support const_iterator, cbegin, etc.
-
-  iterator begin() {
-    return iterator(this, NextValidElementInArray(array_, 0));
-  }
-
+  iterator begin() { return iterator(this, NextValidElementInArray(0)); }
   iterator end() { return iterator(this, kEnd); }
-
   const_iterator cbegin() const {
-    return const_iterator(this, NextValidElementInArray(array_, 0));
+    return const_iterator(this, NextValidElementInArray(0));
   }
   const_iterator cend() const { return const_iterator(this, kEnd); }
-
   const_iterator begin() const { return cbegin(); }
   const_iterator end() const { return cend(); }
 
   iterator find(const Key& k) {
     IndexType index;
-    if (FindInArray(array_, k, &index)) {
+    if (FindInArray(k, &index)) {
       return iterator(this, index);
     } else {
       return end();
@@ -174,238 +200,64 @@ class InlinedHashTable {
 
   const_iterator find(const Key& k) const {
     IndexType index;
-    if (FindInArray(array_, k, &index)) {
+    if (FindInArray(k, &index)) {
       return const_iterator(this, index);
     } else {
       return cend();
     }
   }
 
-  void clear() {
-    for (Elem& elem : array_.inlined) {
-      *ExtractMutableKey(&elem) = options_.EmptyKey();
-    }
-    if (array_.outlined != nullptr) {
-      for (size_t i = 0; i < array_.capacity() - array_.inlined.size(); ++i) {
-        *ExtractMutableKey(&array_.outlined[i]) = options_.EmptyKey();
-      }
-    }
-    array_.size = 0;
-    array_.num_empty_slots = array_.num_empty_slots;
-  }
-
   // Erases the element pointed to by "i". Returns the iterator to the next
   // valid element.
-  iterator erase(iterator i) {
+  iterator Erase(iterator i) {
     Elem& elem = *i;
     *ExtractMutableKey(&elem) = options_.DeletedKey();
-    --array_.size;
-    return iterator(this, NextValidElementInArray(array_, i.index_ + 1));
+    --size_;
+    return iterator(this, NextValidElementInArray(i.index_ + 1));
   }
 
   // If "k" exists in the table, erase it and return 1. Else return 0.
-  IndexType erase(const Key& k) {
+  IndexType Erase(const Key& k) {
     iterator i = find(k);
     if (i == end()) return 0;
-    erase(i);
+    Erase(i);
     return 1;
   }
 
-  std::pair<iterator, bool> insert(Elem&& value) {
-    IndexType index;
-    InsertResult result = Insert(ExtractKey(value), &index);
-    if (result == KEY_FOUND) {
-      return std::make_pair(iterator(this, index), false);
+  bool Empty() const { return size_ == 0; }
+  IndexType Size() const { return size_; }
+  IndexType Capacity() const { return capacity_mask_ + 1; }
+
+  // Return the mutable pointer to the index'th slot in array.
+  Elem* MutableElem(IndexType index) {
+    if (index < NumInlinedElements) {
+      return &inlined_[index];
     }
-    *MutableArraySlot(&array_, index) = std::move(value);
-    return std::make_pair(iterator(this, index), true);
-  }
-
-  std::pair<iterator, bool> insert(const Elem& value) {
-    IndexType index;
-    InsertResult result = Insert(ExtractKey(value), &index);
-    if (result == KEY_FOUND) {
-      return std::make_pair(iterator(this, index), false);
-    }
-    *MutableArraySlot(&array_, index) = value;
-    return std::make_pair(iterator(this, index), true);
-  }
-
-  bool empty() const { return array_.size == 0; }
-  IndexType size() const { return array_.size; }
-  IndexType capacity() const { return array_.capacity(); }
-
-  // Backdoor methods used by map operator[].
-  Elem* Mutable(IndexType index) { return MutableArraySlot(&array_, index); }
-  const Elem& Get(IndexType index) const { return ArraySlot(array_, index); }
-
-  enum InsertResult { KEY_FOUND, EMPTY_SLOT_FOUND, ARRAY_FULL };
-  InsertResult Insert(const Key& key, IndexType* index) {
-    InsertResult result = InsertInArray(&array_, key, index);
-    if (result == KEY_FOUND) return result;
-    if (result != ARRAY_FULL) {
-      ++array_.size;
-      return result;
-    }
-    ExpandTable(1);
-    result = InsertInArray(&array_, key, index);
-    assert(result == EMPTY_SLOT_FOUND);
-    ++array_.size;
-    return result;
-  }
-
- private:
-  static constexpr IndexType kEnd = std::numeric_limits<IndexType>::max();
-
-  // Representation of the hash table.
-  struct Array {
-   public:
-    explicit Array(IndexType capacity)
-        : size(0), capacity_mask_(capacity - 1), num_empty_slots(capacity) {
-      assert((capacity & capacity_mask_) == 0);
-      if (capacity > inlined.size()) {
-        outlined.reset(new Elem[capacity - inlined.size()]);
-      }
-    }
-
-    Array(const Array& other) { *this = other; }
-
-    Array(Array&& other) { *this = std::move(other); }
-
-    Array& operator=(const Array& other) {
-      size = other.size;
-      capacity_mask_ = other.capacity_mask_;
-      num_empty_slots = other.num_empty_slots;
-      inlined = other.inlined;
-      if (other.outlined != nullptr) {
-        const size_t n = other.capacity() - inlined.size();
-        outlined.reset(new Elem[n]);
-        std::copy(&other.outlined[0], &other.outlined[n], &outlined[0]);
-      }
-      return *this;
-    }
-
-    Array& operator=(Array&& other) {
-      size = other.size;
-      capacity_mask_ = other.capacity_mask_;
-      num_empty_slots = other.num_empty_slots;
-      inlined = std::move(other.inlined);
-      outlined = std::move(other.outlined);
-
-      other.outlined.reset();
-      other.size = 0;
-      other.num_empty_slots = 0;
-      other.capacity_mask_ = other.inlined.size() - 1;
-      return *this;
-    }
-
-    IndexType Clamp(IndexType v) const { return v & capacity_mask_; }
-    IndexType capacity() const { return capacity_mask_ + 1; }
-
-    // First NumInlinedElements are stored in inlined. The rest are stored in
-    // outlined.
-    std::array<Elem, NumInlinedElements> inlined;
-    std::unique_ptr<Elem[]> outlined;
-    // # of filled slots.
-    IndexType size;
-    // Capacity of inlined + capacity of outlined. Always a power of two.
-    IndexType capacity_mask_;
-    // Number of empty slots, i.e., capacity - (# of filled slots + # of
-    // tombstones).
-    IndexType num_empty_slots;
-  };
-
-  static IndexType QuadraticProbe(const Array& array, IndexType current,
-                                  int retries) {
-    return array.Clamp((current + retries));
-  }
-
-  IndexType ComputeCapacity(IndexType desired) {
-    desired /= MaxLoadFactor();
-    if (desired < NumInlinedElements) desired = NumInlinedElements;
-    if (desired <= 0) return desired;
-    return static_cast<IndexType>(1)
-           << static_cast<int>(std::ceil(std::log2(desired)));
-  }
-
-  // Fill "array" with empty_key.
-  void InitArray(const Key& empty_key, Array* array) const {
-    for (Elem& elem : array->inlined) {
-      *ExtractMutableKey(&elem) = empty_key;
-    }
-    if (array->outlined != nullptr) {
-      IndexType n = array->capacity() - array->inlined.size();
-      for (IndexType i = 0; i < n; ++i) {
-        *ExtractMutableKey(&array->outlined[i]) = empty_key;
-      }
-    }
+    return &outlined_[index - NumInlinedElements];
   }
 
   // Return the index'th slot in array.
-  static const Elem& ArraySlot(const Array& array, IndexType index) {
+  const Elem& GetElem(IndexType index) const {
     if (index < NumInlinedElements) {
-      return array.inlined[index];
+      return inlined_[index];
     }
-    return array.outlined[index - NumInlinedElements];
+    return outlined_[index - NumInlinedElements];
   }
 
-  // Return the mutable pointer to the index'th slot in array.
-  static Elem* MutableArraySlot(Array* array, IndexType index) {
-    if (index < NumInlinedElements) {
-      return &array->inlined[index];
-    }
-    return &array->outlined[index - NumInlinedElements];
-  }
-
-  // Find the first filled slot at or after "from". For incremenenting an
-  // iterator.
-  IndexType NextValidElementInArray(const Array& array, IndexType from) const {
-    IndexType i = from;
-    for (;;) {
-      if (i >= array.capacity()) {
-        return kEnd;
-      }
-      const Key& k = ExtractKey(ArraySlot(array, i));
-      if (!IsEmptyKey(k) && !IsDeletedKey(k)) {
-        return i;
-      }
-      ++i;
-    }
-  }
-
-  // Find "k" in the array. If found, set *index to the location of the key in
-  // the array.
-  bool FindInArray(const Array& array, const Key& k, IndexType* index) const {
-    if (array.capacity() == 0) return false;
-    *index = array.Clamp(ComputeHash(k));
-    for (int retries = 1;; ++retries) {
-      const Elem& elem = ArraySlot(array, *index);
-      const Key& key = ExtractKey(elem);
-      if (KeysEqual(key, k)) {
-        return true;
-      }
-      if (IsEmptyKey(key)) {
-        return false;
-      }
-      if (retries > array.capacity()) {
-        return false;
-      }
-      *index = QuadraticProbe(array, *index, retries);
-    }
-  }
+  enum InsertResult { KEY_FOUND, EMPTY_SLOT_FOUND, ARRAY_FULL };
 
   // Either find "k" in the array, or find a slot into which "k" can be
   // inserted.
-  InsertResult InsertInArray(Array* array, const Key& k, IndexType* index) {
+  InsertResult Insert(const Key& k, IndexType* index) {
     constexpr IndexType kInvalidIndex = std::numeric_limits<IndexType>::max();
 
-    if (array->capacity() == 0) return ARRAY_FULL;
-    *index = array->Clamp(ComputeHash(k));
+    if (Capacity() == 0) return ARRAY_FULL;
+    *index = Clamp(ComputeHash(k));
     const IndexType start_index = *index;
     bool found_empty_slot = false;
     IndexType empty_index = kInvalidIndex;
     for (int retries = 1;; ++retries) {
-      const Elem& elem = ArraySlot(*array, *index);
+      const Elem& elem = GetElem(*index);
       const Key& key = ExtractKey(elem);
       if (KeysEqual(key, k)) {
         return KEY_FOUND;
@@ -416,41 +268,90 @@ class InlinedHashTable {
         if (empty_index != kInvalidIndex) {
           // Found a deleted slot earlier. Take it.
           *index = empty_index;
+          ++size_;
           return EMPTY_SLOT_FOUND;
         }
-        if (array->num_empty_slots >=
-            array->capacity() * (1 - MaxLoadFactor())) {
-          --array->num_empty_slots;
+        if (num_empty_slots_ >= Capacity() * (1 - MaxLoadFactor())) {
+          --num_empty_slots_;
+          ++size_;
           return EMPTY_SLOT_FOUND;
         }
         return ARRAY_FULL;
       }
-      if (retries > array->capacity()) {
+      if (retries > Capacity()) {
         return ARRAY_FULL;
       }
-      *index = QuadraticProbe(*array, *index, retries);
+      *index = QuadraticProbe(*index, retries);
     }
   }
-  // Rehash the hash table. "delta" is the number of elements to add to the
-  // current table. It's used to compute the capacity of the new table.  Culls
-  // tombstones and move all the existing elements and
-  void ExpandTable(IndexType delta) {
-    const IndexType new_capacity = ComputeCapacity(array_.size + delta);
-    // std::cout << "Expand: " << new_capacity << "\n";
-    Array new_array(new_capacity);
-    InitArray(options_.EmptyKey(), &new_array);
-    for (Elem& e : *this) {
-      IndexType index;
-      const Key& key = ExtractKey(e);
-      if (IsEmptyKey(key) || IsDeletedKey(key)) continue;
-      if (FindInArray(new_array, ExtractKey(e), &index)) {
-        abort();
-      }
-      *MutableArraySlot(&new_array, index) = std::move(e);
-      --new_array.num_empty_slots;
+
+  void Clear() {
+    for (Elem& elem : inlined_) {
+      *ExtractMutableKey(&elem) = options_.EmptyKey();
     }
-    new_array.size = array_.size;
-    array_ = std::move(new_array);
+    if (outlined_ != nullptr) {
+      for (size_t i = 0; i < Capacity() - inlined_.size(); ++i) {
+        *ExtractMutableKey(&outlined_[i]) = options_.EmptyKey();
+      }
+    }
+    size_ = 0;
+    num_empty_slots_ = 0;
+  }
+
+  const Options& options() const { return options_; }
+  const Hash& hash() const { return hash_; }
+  const EqualTo& equal_to() const { return equal_to_; }
+
+  IndexType ComputeCapacity(IndexType desired) {
+    desired /= MaxLoadFactor();
+    if (desired < NumInlinedElements) desired = NumInlinedElements;
+    if (desired <= 0) return desired;
+    return static_cast<IndexType>(1)
+           << static_cast<int>(std::ceil(std::log2(desired)));
+  }
+
+ private:
+  static constexpr IndexType kEnd = std::numeric_limits<IndexType>::max();
+
+  IndexType QuadraticProbe(IndexType current, int retries) const {
+    return Clamp((current + retries));
+  }
+
+  // Find the first filled slot at or after "from". For incremenenting an
+  // iterator.
+  IndexType NextValidElementInArray(IndexType from) const {
+    IndexType i = from;
+    for (;;) {
+      if (i >= Capacity()) {
+        return kEnd;
+      }
+      const Key& k = ExtractKey(GetElem(i));
+      if (!IsEmptyKey(k) && !IsDeletedKey(k)) {
+        return i;
+      }
+      ++i;
+    }
+  }
+
+  // Find "k" in the array. If found, set *index to the location of the key in
+  // the array.
+  bool FindInArray(const Key& k, IndexType* index) const {
+    if (Capacity() == 0) return false;
+    *index = Clamp(ComputeHash(k));
+    for (int retries = 1;; ++retries) {
+      const Elem& elem = GetElem(*index);
+      const Key& key = ExtractKey(elem);
+      if (KeysEqual(key, k)) {
+        return true;
+      }
+      if (IsEmptyKey(key)) {
+        return false;
+      }
+      if (retries > Capacity()) {
+        return false;
+      }
+      *index = QuadraticProbe(*index, retries);
+    }
   }
 
   template <typename T0, typename T1>
@@ -495,11 +396,24 @@ class InlinedHashTable {
 
   double MaxLoadFactor() const { return SfinaeMaxLoadFactor(&options_); }
 
+  IndexType Clamp(IndexType v) const { return v & capacity_mask_; }
+  IndexType capacity() const { return capacity_mask_ + 1; }
+
+  // First NumInlinedElements are stored in inlined. The rest are stored in
+  // outlined.
+  std::array<Elem, NumInlinedElements> inlined_;
+  std::unique_ptr<Elem[]> outlined_;
+  // # of filled slots.
+  IndexType size_;
+  // Number of empty slots, i.e., capacity - (# of filled slots + # of
+  // tombstones).
+  IndexType num_empty_slots_;
+  // Capacity of inlined + capacity of outlined. Always a power of two.
+  IndexType capacity_mask_;
   Options options_;
   GetKey get_key_;
   Hash hash_;
   EqualTo equal_to_;
-  Array array_;
 };
 
 template <typename Key, typename Value, int NumInlinedElements,
@@ -523,27 +437,36 @@ class InlinedHashMap {
                  const Hash& hash = Hash(), const EqualTo& equal_to = EqualTo())
       : impl_(bucket_count, options, hash, equal_to) {}
 
-  bool empty() const { return impl_.empty(); }
+  bool empty() const { return impl_.Empty(); }
   iterator begin() { return impl_.begin(); }
   iterator end() { return impl_.end(); }
   const_iterator cbegin() const { return impl_.cbegin(); }
   const_iterator cend() const { return impl_.cend(); }
   const_iterator begin() const { return impl_.cbegin(); }
   const_iterator end() const { return impl_.cend(); }
-  IndexType size() const { return impl_.size(); }
+  IndexType size() const { return impl_.Size(); }
   iterator find(const Key& k) { return impl_.find(k); }
   const_iterator find(const Key& k) const { return impl_.find(k); }
 
   std::pair<iterator, bool> insert(Elem&& value) {
-    return impl_.insert(std::move(value));
+    IndexType index;
+    typename Table::InsertResult result = Insert(value.first, &index);
+    Elem* slot = impl_.MutableElem(index);
+    if (result != Table::KEY_FOUND) {
+      // newly inserted. fill the key.
+      *slot = std::move(value);
+      return std::make_pair(typename Table::iterator(&impl_, index), true);
+    }
+    return std::make_pair(typename Table::iterator(&impl_, index), false);
   }
+
   iterator erase(iterator i) { return impl_.erase(i); }
-  IndexType erase(const Key& k) { return impl_.erase(k); }
-  void clear() { impl_.clear(); }
+  IndexType erase(const Key& k) { return impl_.Erase(k); }
+  void clear() { impl_.Clear(); }
   Value& operator[](const Key& k) {
     IndexType index;
-    typename Table::InsertResult result = impl_.Insert(k, &index);
-    Elem* slot = impl_.Mutable(index);
+    typename Table::InsertResult result = Insert(k, &index);
+    Elem* slot = impl_.MutableElem(index);
     if (result != Table::KEY_FOUND) {
       // newly inserted. fill the key.
       slot->first = k;
@@ -552,9 +475,29 @@ class InlinedHashMap {
   }
 
   // Non-standard methods, mainly for testing.
-  size_t capacity() const { return impl_.capacity(); }
+  size_t capacity() const { return impl_.Capacity(); }
 
  private:
+  // Rehash the hash table. "delta" is the number of elements to add to the
+  // current table. It's used to compute the capacity of the new table.  Culls
+  // tombstones and move all the existing elements and
+  typename Table::InsertResult Insert(const Key& key, IndexType* index) {
+    typename Table::InsertResult result = impl_.Insert(key, index);
+    if (result == Table::KEY_FOUND) return result;
+    if (result != Table::ARRAY_FULL) {
+      return result;
+    }
+
+    const IndexType new_capacity = impl_.ComputeCapacity(size() + 1);
+    Table new_impl(new_capacity, impl_.options(), impl_.hash(),
+                   impl_.equal_to());
+    new_impl.MoveFrom(std::move(impl_));
+    impl_ = std::move(new_impl);
+    result = Insert(key, index);
+    assert(result == EMPTY_SLOT_FOUND);
+    return result;
+  }
+
   Table impl_;
 };
 
@@ -601,5 +544,25 @@ class InlinedHashSet {
   size_t capacity() const { return impl_.capacity(); }
 
  private:
+  // Rehash the hash table. "delta" is the number of elements to add to the
+  // current table. It's used to compute the capacity of the new table.  Culls
+  // tombstones and move all the existing elements and
+  typename Table::InsertResult Insert(const Elem& elem,
+                                      typename Table::IndexType* index) {
+    typename Table::InsertResult result = impl_.InsertInArray(elem, index);
+    if (result == Table::KEY_FOUND) return result;
+    if (result != Table::ARRAY_FULL) {
+      return result;
+    }
+
+    const IndexType new_capacity = impl_.ComputeCapacity(size() + 1);
+    Table new_impl(new_capacity, impl_.options(), impl_.hash(),
+                   impl_.equal_to());
+    new_impl.MoveFrom(impl_);
+    impl_ = std::move(new_impl);
+    result = InsertInArray(elem, index);
+    assert(result == EMPTY_SLOT_FOUND);
+    return result;
+  }
   Table impl_;
 };

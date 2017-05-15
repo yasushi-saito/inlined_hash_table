@@ -32,10 +32,6 @@
 // Caution: each method must return the same value across multiple invocations.
 // Returning a compile-time constant allows the compiler to optimize the code
 // well.
-//
-// TODO: allow NumInlinedElements to be zero.
-// TODO: implement bucket reservation.
-
 template <typename Key, typename Elem, int NumInlinedElements, typename Options,
           typename GetKey, typename Hash, typename EqualTo, typename IndexType>
 class InlinedHashTable {
@@ -359,7 +355,7 @@ class InlinedHashTable {
    public:
     T1& second() { return *this; }
     const T1& second() const { return *this; }
-    T0 first;
+    T0 first_;
   };
 
   const Key& ExtractKey(const Elem& elem) const { return get_key_.Get(elem); }
@@ -399,21 +395,22 @@ class InlinedHashTable {
   IndexType Clamp(IndexType v) const { return v & capacity_mask_; }
   IndexType capacity() const { return capacity_mask_ + 1; }
 
-  // First NumInlinedElements are stored in inlined. The rest are stored in
-  // outlined.
-  std::array<Elem, NumInlinedElements> inlined_;
-  std::unique_ptr<Elem[]> outlined_;
   // # of filled slots.
   IndexType size_;
   // Number of empty slots, i.e., capacity - (# of filled slots + # of
   // tombstones).
   IndexType num_empty_slots_;
-  // Capacity of inlined + capacity of outlined. Always a power of two.
+  // Capacity-1 of inlined + capacity of outlined. Always a power of two.
   IndexType capacity_mask_;
   Options options_;
   GetKey get_key_;
   Hash hash_;
   EqualTo equal_to_;
+  std::unique_ptr<Elem[]> outlined_;
+
+  // First NumInlinedElements are stored in inlined. The rest are stored in
+  // outlined.
+  std::array<Elem, NumInlinedElements> inlined_;
 };
 
 template <typename Key, typename Value, int NumInlinedElements,

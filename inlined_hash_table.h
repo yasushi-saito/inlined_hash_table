@@ -41,17 +41,17 @@ class InlinedHashTable {
   InlinedHashTable(IndexType bucket_count, const Options& options,
                    const Hash& hash, const EqualTo& equal_to)
       : size_(0),
-        num_empty_slots_(ComputeCapacity(bucket_count)),
-        capacity_mask_(num_empty_slots_ - 1),
+        capacity_mask_(ComputeCapacity(bucket_count) - 1),
         options_(options),
         hash_(hash),
         equal_to_(equal_to) {
+    num_empty_slots_and_inlined_.t0() = capacity_mask_ + 1;
     assert((capacity & capacity_mask_) == 0);
-    for (Elem& elem : inlined_) {
+    for (Elem& elem : inlined()) {
       *ExtractMutableKey(&elem) = options_.EmptyKey();
     }
-    if (Capacity() > inlined_.size()) {
-      const IndexType n = Capacity() - inlined_.size();
+    if (Capacity() > inlined().size()) {
+      const IndexType n = Capacity() - inlined().size();
       outlined_.reset(new Elem[n]);
       for (IndexType i = 0; i < n; ++i) {
         *ExtractMutableKey(&outlined_[i]) = options_.EmptyKey();
@@ -65,10 +65,11 @@ class InlinedHashTable {
   InlinedHashTable& operator=(const InlinedHashTable& other) {
     size_ = other.size_;
     capacity_mask_ = other.capacity_mask_;
-    num_empty_slots_ = other.num_empty_slots_;
-    inlined_ = other.inlined_;
+    options_ = other.options_;
+    hash_ = other.hash_;
+    num_empty_slots_and_inlined_ = other.num_empty_slots_and_inlined_;
     if (other.outlined_ != nullptr) {
-      const size_t n = other.capacity() - inlined_.size();
+      const size_t n = other.Capacity() - inlined().size();
       outlined_.reset(new Elem[n]);
       std::copy(&other.outlined_[0], &other.outlined_[n], &outlined_[0]);
     }
@@ -78,14 +79,15 @@ class InlinedHashTable {
   InlinedHashTable& operator=(InlinedHashTable&& other) {
     size_ = other.size_;
     capacity_mask_ = other.capacity_mask_;
-    num_empty_slots_ = other.num_empty_slots_;
-    inlined_ = std::move(other.inlined_);
+    options_ = std::move(other.options_);
+    hash_ = std::move(other.hash_);
+    num_empty_slots_and_inlined_ =
+        std::move(other.num_empty_slots_and_inlined_);
     outlined_ = std::move(other.outlined_);
 
     other.outlined_.reset();
     other.size_ = 0;
-    other.num_empty_slots_ = 0;
-    other.capacity_mask_ = other.inlined_.size() - 1;
+    other.capacity_mask_ = other.inlined().size() - 1;
     return *this;
   }
 
@@ -99,7 +101,7 @@ class InlinedHashTable {
         abort();
       }
       *MutableElem(index) = std::move(e);
-      --num_empty_slots_;
+      --num_empty_slots();
     }
     size_ = other.size_;
   }
@@ -227,7 +229,7 @@ class InlinedHashTable {
   // Return the mutable pointer to the index'th slot in array.
   Elem* MutableElem(IndexType index) {
     if (index < NumInlinedElements) {
-      return &inlined_[index];
+      return &inlined()[index];
     }
     return &outlined_[index - NumInlinedElements];
   }
@@ -235,7 +237,7 @@ class InlinedHashTable {
   // Return the index'th slot in array.
   const Elem& GetElem(IndexType index) const {
     if (index < NumInlinedElements) {
-      return inlined_[index];
+      return inlined()[index];
     }
     return outlined_[index - NumInlinedElements];
   }
@@ -267,8 +269,8 @@ class InlinedHashTable {
           ++size_;
           return EMPTY_SLOT_FOUND;
         }
-        if (num_empty_slots_ >= Capacity() * (1 - MaxLoadFactor())) {
-          --num_empty_slots_;
+        if (num_empty_slots() >= Capacity() * (1 - MaxLoadFactor())) {
+          --num_empty_slots();
           ++size_;
           return EMPTY_SLOT_FOUND;
         }
@@ -282,16 +284,16 @@ class InlinedHashTable {
   }
 
   void Clear() {
-    for (Elem& elem : inlined_) {
+    for (Elem& elem : inlined()) {
       *ExtractMutableKey(&elem) = options_.EmptyKey();
     }
     if (outlined_ != nullptr) {
-      for (size_t i = 0; i < Capacity() - inlined_.size(); ++i) {
+      for (size_t i = 0; i < Capacity() - inlined().size(); ++i) {
         *ExtractMutableKey(&outlined_[i]) = options_.EmptyKey();
       }
     }
     size_ = 0;
-    num_empty_slots_ = 0;
+    num_empty_slots() = 0;
   }
 
   const Options& options() const { return options_; }
@@ -350,19 +352,36 @@ class InlinedHashTable {
     }
   }
 
-  template <typename T0, typename T1>
-  class CompressedPair : public T1 {
+  // Simpler implementation of boost::compressed_pair.
+  template <typename T0, typename T1, bool T1Empty>
+  class CompressedPairImpl {
    public:
-    T1& second() { return *this; }
-    const T1& second() const { return *this; }
-    T0 first_;
+    T0& t0() { return t0_; }
+    const T0& t0() const { return t0_; }
+    T1& t1() { return t1_; }
+    const T1& t1() const { return t1_; }
+
+    T0 t0_;
+    T1 t1_;
   };
 
-  const Key& ExtractKey(const Elem& elem) const { return get_key_.Get(elem); }
-  Key* ExtractMutableKey(Elem* elem) const { return get_key_.Mutable(elem); }
+  template <typename T0, typename T1>
+  class CompressedPairImpl<T0, T1, true> {
+   public:
+    T0& t0() { return t0_; }
+    const T0& t0() const { return t0_; }
+
+    T1& t1() { return reinterpret_cast<T1&>(t0_); }
+    const T1& t1() const { return reinterpret_cast<const T1&>(t0_); }
+
+    T0 t0_;
+  };
+
+  const Key& ExtractKey(const Elem& elem) const { return GetKey::Get(elem); }
+  Key* ExtractMutableKey(Elem* elem) const { return GetKey::Mutable(elem); }
   IndexType ComputeHash(const Key& key) const { return hash_(key); }
   bool KeysEqual(const Key& k0, const Key& k1) const {
-    return equal_to_(k0, k1);
+    return equal_to()(k0, k1);
   }
   bool IsEmptyKey(const Key& k) const {
     return KeysEqual(options_.EmptyKey(), k);
@@ -393,24 +412,34 @@ class InlinedHashTable {
   double MaxLoadFactor() const { return SfinaeMaxLoadFactor(&options_); }
 
   IndexType Clamp(IndexType v) const { return v & capacity_mask_; }
-  IndexType capacity() const { return capacity_mask_ + 1; }
+
+  using InlinedArray = std::array<Elem, NumInlinedElements>;
 
   // # of filled slots.
   IndexType size_;
-  // Number of empty slots, i.e., capacity - (# of filled slots + # of
-  // tombstones).
-  IndexType num_empty_slots_;
   // Capacity-1 of inlined + capacity of outlined. Always a power of two.
   IndexType capacity_mask_;
+  // First NumInlinedElements are stored in inlined. The rest are stored in
+  // outlined.
+  CompressedPairImpl<IndexType, InlinedArray, NumInlinedElements == 0>
+      num_empty_slots_and_inlined_;
+
   Options options_;
-  GetKey get_key_;
   Hash hash_;
   EqualTo equal_to_;
   std::unique_ptr<Elem[]> outlined_;
 
-  // First NumInlinedElements are stored in inlined. The rest are stored in
-  // outlined.
-  std::array<Elem, NumInlinedElements> inlined_;
+  const InlinedArray& inlined() const {
+    return num_empty_slots_and_inlined_.t1();
+  }
+  InlinedArray& inlined() { return num_empty_slots_and_inlined_.t1(); }
+
+  // Number of empty slots, i.e., capacity - (# of filled slots + # of
+  // tombstones).
+  IndexType num_empty_slots() const {
+    return num_empty_slots_and_inlined_.t0();
+  }
+  IndexType& num_empty_slots() { return num_empty_slots_and_inlined_.t0(); }
 };
 
 template <typename Key, typename Value, int NumInlinedElements,
@@ -421,8 +450,8 @@ class InlinedHashMap {
   using Elem = std::pair<Key, Value>;
   using value_type = Elem;
   struct GetKey {
-    const Key& Get(const Elem& elem) const { return elem.first; }
-    Key* Mutable(Elem* elem) const { return &elem->first; }
+    static const Key& Get(const Elem& elem) { return elem.first; }
+    static Key* Mutable(Elem* elem) { return &elem->first; }
   };
   using Table = InlinedHashTable<Key, Elem, NumInlinedElements, Options, GetKey,
                                  Hash, EqualTo, IndexType>;

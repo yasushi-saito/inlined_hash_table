@@ -79,6 +79,13 @@ typedef ::testing::Types<InlinedHash, HopScotchHash> MyTypes;
 
 TYPED_TEST_CASE(MapTest, MyTypes);
 
+TEST(InlinedHashMapTest, Size) {
+  InlinedHashMap<int, int, 0, MapOptions<int>, std::hash<int>, std::equal_to<int>,
+                 int>
+      m;
+  ASSERT_EQ(sizeof(m), 3);
+}
+
 TYPED_TEST(MapTest, Simple) {
   TypeParam map;
   EXPECT_EQ(8, map.capacity());

@@ -322,7 +322,9 @@ void DoLookupTest(benchmark::State& state, std::unique_ptr<Map> map) {
 
   while (state.KeepRunning()) {
     for (const Key& v : values) {
-      Callback((*map)[v]);
+      auto it = map->find(v);
+      if (it == map->end()) abort();
+      Callback(it->second);
     }
   }
 }

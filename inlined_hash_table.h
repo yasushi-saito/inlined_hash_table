@@ -97,7 +97,7 @@ class InlinedHashTable {
       IndexType index;
       const Key& key = GetKey::Get(e);
       if (IsEmptyKey(key) || IsDeletedKey(key)) continue;
-      if (FindInArray(GetKey::Get(e), &index)) {
+      if (FindInArray(key, hash_(key), &index)) {
         abort();
       }
       *MutableElem(index) = std::move(e);
@@ -189,7 +189,7 @@ class InlinedHashTable {
 
   iterator find(const Key& k) {
     IndexType index;
-    if (FindInArray(k, &index)) {
+    if (FindInArray(k, hash_(k), &index)) {
       return iterator(this, index);
     } else {
       return end();
@@ -198,7 +198,7 @@ class InlinedHashTable {
 
   const_iterator find(const Key& k) const {
     IndexType index;
-    if (FindInArray(k, &index)) {
+    if (FindInArray(k, hash_(k), &index)) {
       return const_iterator(this, index);
     } else {
       return cend();
@@ -242,24 +242,40 @@ class InlinedHashTable {
     return outlined_[index - NumInlinedElements];
   }
 
+  // Find "k" in the array. If found, set *index to the location of the key in
+  // the array.
+  bool FindInArray(const Key& k, size_t hash, IndexType* index) const {
+    if (Capacity() == 0) return false;
+    *index = Clamp(hash);
+    for (int retries = 1;; ++retries) {
+      const Elem& elem = GetElem(*index);
+      const Key& key = GetKey::Get(elem);
+      if (equal_to_(key, k)) {
+        return true;
+      } else if (IsEmptyKey(key)) {
+        return false;
+      }
+      if (retries > Capacity()) {
+        return false;
+      }
+      *index = QuadraticProbe(*index, retries);
+    }
+  }
+
   enum InsertResult { KEY_FOUND, EMPTY_SLOT_FOUND, ARRAY_FULL };
 
   // Either find "k" in the array, or find a slot into which "k" can be
   // inserted.
-  InsertResult Insert(const Key& k, IndexType* index) {
+  InsertResult Insert(const Key& k, size_t hash, IndexType* index) {
     constexpr IndexType kInvalidIndex = std::numeric_limits<IndexType>::max();
-
     if (Capacity() == 0) return ARRAY_FULL;
-    *index = Clamp(hash_(k));
-    const IndexType start_index = *index;
-    bool found_empty_slot = false;
+    *index = Clamp(hash);
     IndexType empty_index = kInvalidIndex;
     for (int retries = 1;; ++retries) {
       const Elem& elem = GetElem(*index);
       const Key& key = GetKey::Get(elem);
-      if (empty_index == kInvalidIndex && IsDeletedKey(key)) {
-        // Remember the first tombstone, in case we need to insert here.
-        empty_index = *index;
+      if (equal_to_(key, k)) {
+        return KEY_FOUND;
       } else if (IsEmptyKey(key)) {
         if (empty_index != kInvalidIndex) {
           // Found a tombstone earlier. Take it.
@@ -273,8 +289,9 @@ class InlinedHashTable {
           return EMPTY_SLOT_FOUND;
         }
         return ARRAY_FULL;
-      } else if (equal_to()(key, k)) {
-        return KEY_FOUND;
+      } else if (empty_index == kInvalidIndex && IsDeletedKey(key)) {
+        // Remember the first tombstone, in case we need to insert here.
+        empty_index = *index;
       }
       if (retries > Capacity()) {
         return ARRAY_FULL;
@@ -336,27 +353,6 @@ class InlinedHashTable {
     }
   }
 
-  // Find "k" in the array. If found, set *index to the location of the key in
-  // the array.
-  bool FindInArray(const Key& k, IndexType* index) const {
-    if (Capacity() == 0) return false;
-    *index = Clamp(hash_(k));
-    for (int retries = 1;; ++retries) {
-      const Elem& elem = GetElem(*index);
-      const Key& key = GetKey::Get(elem);
-      if (equal_to()(key, k)) {
-        return true;
-      }
-      if (IsEmptyKey(key)) {
-        return false;
-      }
-      if (retries > Capacity()) {
-        return false;
-      }
-      *index = QuadraticProbe(*index, retries);
-    }
-  }
-
   // Simpler implementation of boost::compressed_pair.
   template <typename T0, typename T1, bool T1Empty>
   class CompressedPairImpl {
@@ -383,7 +379,7 @@ class InlinedHashTable {
   };
 
   bool IsEmptyKey(const Key& k) const {
-    return equal_to()(options_.EmptyKey(), k);
+    return equal_to_(options_.EmptyKey(), k);
   }
 
   template <typename TOptions>
@@ -506,7 +502,8 @@ class InlinedHashMap {
   // current table. It's used to compute the capacity of the new table.  Culls
   // tombstones and move all the existing elements and
   typename Table::InsertResult Insert(const Key& key, IndexType* index) {
-    typename Table::InsertResult result = impl_.Insert(key, index);
+    const size_t hash = impl_.hash()(key);
+    typename Table::InsertResult result = impl_.Insert(key, hash, index);
     if (result == Table::KEY_FOUND) return result;
     if (result != Table::ARRAY_FULL) {
       return result;
@@ -517,7 +514,7 @@ class InlinedHashMap {
                    impl_.equal_to());
     new_impl.MoveFrom(std::move(impl_));
     impl_ = std::move(new_impl);
-    result = Insert(key, index);
+    result = impl_.Insert(key, hash, index);
     assert(result == EMPTY_SLOT_FOUND);
     return result;
   }
@@ -573,6 +570,7 @@ class InlinedHashSet {
   // tombstones and move all the existing elements and
   typename Table::InsertResult Insert(const Elem& elem,
                                       typename Table::IndexType* index) {
+    const size_t hash = impl_.hash()(elem);
     typename Table::InsertResult result = impl_.InsertInArray(elem, index);
     if (result == Table::KEY_FOUND) return result;
     if (result != Table::ARRAY_FULL) {
@@ -584,7 +582,7 @@ class InlinedHashSet {
                    impl_.equal_to());
     new_impl.MoveFrom(impl_);
     impl_ = std::move(new_impl);
-    result = InsertInArray(elem, index);
+    result = impl_.InsertInArray(elem, index);
     assert(result == EMPTY_SLOT_FOUND);
     return result;
   }

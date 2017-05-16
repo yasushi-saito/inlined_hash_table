@@ -48,13 +48,13 @@ class InlinedHashTable {
     num_empty_slots_and_inlined_.t0() = capacity_mask_ + 1;
     assert((capacity & capacity_mask_) == 0);
     for (Elem& elem : inlined()) {
-      *ExtractMutableKey(&elem) = options_.EmptyKey();
+      *GetKey::Mutable(&elem) = options_.EmptyKey();
     }
     if (Capacity() > inlined().size()) {
       const IndexType n = Capacity() - inlined().size();
       outlined_.reset(new Elem[n]);
       for (IndexType i = 0; i < n; ++i) {
-        *ExtractMutableKey(&outlined_[i]) = options_.EmptyKey();
+        *GetKey::Mutable(&outlined_[i]) = options_.EmptyKey();
       }
     }
   }
@@ -95,9 +95,9 @@ class InlinedHashTable {
     assert(size_ == 0);
     for (Elem& e : other) {
       IndexType index;
-      const Key& key = ExtractKey(e);
+      const Key& key = GetKey::Get(e);
       if (IsEmptyKey(key) || IsDeletedKey(key)) continue;
-      if (FindInArray(ExtractKey(e), &index)) {
+      if (FindInArray(GetKey::Get(e), &index)) {
         abort();
       }
       *MutableElem(index) = std::move(e);
@@ -209,7 +209,7 @@ class InlinedHashTable {
   // valid element.
   iterator Erase(iterator i) {
     Elem& elem = *i;
-    *ExtractMutableKey(&elem) = options_.DeletedKey();
+    *GetKey::Mutable(&elem) = options_.DeletedKey();
     --size_;
     return iterator(this, NextValidElementInArray(i.index_ + 1));
   }
@@ -250,21 +250,19 @@ class InlinedHashTable {
     constexpr IndexType kInvalidIndex = std::numeric_limits<IndexType>::max();
 
     if (Capacity() == 0) return ARRAY_FULL;
-    *index = Clamp(ComputeHash(k));
+    *index = Clamp(hash_(k));
     const IndexType start_index = *index;
     bool found_empty_slot = false;
     IndexType empty_index = kInvalidIndex;
     for (int retries = 1;; ++retries) {
       const Elem& elem = GetElem(*index);
-      const Key& key = ExtractKey(elem);
-      if (KeysEqual(key, k)) {
-        return KEY_FOUND;
-      }
-      if (IsDeletedKey(key)) {
-        if (empty_index == kInvalidIndex) empty_index = *index;
+      const Key& key = GetKey::Get(elem);
+      if (empty_index == kInvalidIndex && IsDeletedKey(key)) {
+        // Remember the first tombstone, in case we need to insert here.
+        empty_index = *index;
       } else if (IsEmptyKey(key)) {
         if (empty_index != kInvalidIndex) {
-          // Found a deleted slot earlier. Take it.
+          // Found a tombstone earlier. Take it.
           *index = empty_index;
           ++size_;
           return EMPTY_SLOT_FOUND;
@@ -275,6 +273,8 @@ class InlinedHashTable {
           return EMPTY_SLOT_FOUND;
         }
         return ARRAY_FULL;
+      } else if (equal_to()(key, k)) {
+        return KEY_FOUND;
       }
       if (retries > Capacity()) {
         return ARRAY_FULL;
@@ -285,11 +285,11 @@ class InlinedHashTable {
 
   void Clear() {
     for (Elem& elem : inlined()) {
-      *ExtractMutableKey(&elem) = options_.EmptyKey();
+      *GetKey::Mutable(&elem) = options_.EmptyKey();
     }
     if (outlined_ != nullptr) {
       for (size_t i = 0; i < Capacity() - inlined().size(); ++i) {
-        *ExtractMutableKey(&outlined_[i]) = options_.EmptyKey();
+        *GetKey::Mutable(&outlined_[i]) = options_.EmptyKey();
       }
     }
     size_ = 0;
@@ -301,6 +301,11 @@ class InlinedHashTable {
   const EqualTo& equal_to() const { return equal_to_; }
 
   IndexType ComputeCapacity(IndexType desired) {
+    if (desired == 1 && NumInlinedElements == 0) {
+      // When the user doesn't specify the initial table size, use the same
+      // default as the dense_hash_map.
+      return 32;
+    }
     desired /= MaxLoadFactor();
     if (desired < NumInlinedElements) desired = NumInlinedElements;
     if (desired <= 0) return desired;
@@ -323,7 +328,7 @@ class InlinedHashTable {
       if (i >= Capacity()) {
         return kEnd;
       }
-      const Key& k = ExtractKey(GetElem(i));
+      const Key& k = GetKey::Get(GetElem(i));
       if (!IsEmptyKey(k) && !IsDeletedKey(k)) {
         return i;
       }
@@ -335,11 +340,11 @@ class InlinedHashTable {
   // the array.
   bool FindInArray(const Key& k, IndexType* index) const {
     if (Capacity() == 0) return false;
-    *index = Clamp(ComputeHash(k));
+    *index = Clamp(hash_(k));
     for (int retries = 1;; ++retries) {
       const Elem& elem = GetElem(*index);
-      const Key& key = ExtractKey(elem);
-      if (KeysEqual(key, k)) {
+      const Key& key = GetKey::Get(elem);
+      if (equal_to()(key, k)) {
         return true;
       }
       if (IsEmptyKey(key)) {
@@ -377,14 +382,8 @@ class InlinedHashTable {
     T0 t0_;
   };
 
-  const Key& ExtractKey(const Elem& elem) const { return GetKey::Get(elem); }
-  Key* ExtractMutableKey(Elem* elem) const { return GetKey::Mutable(elem); }
-  IndexType ComputeHash(const Key& key) const { return hash_(key); }
-  bool KeysEqual(const Key& k0, const Key& k1) const {
-    return equal_to()(k0, k1);
-  }
   bool IsEmptyKey(const Key& k) const {
-    return KeysEqual(options_.EmptyKey(), k);
+    return equal_to()(options_.EmptyKey(), k);
   }
 
   template <typename TOptions>
@@ -405,7 +404,6 @@ class InlinedHashTable {
   static auto SfinaeMaxLoadFactor(...) -> double { return 0.5; }
 
   bool IsDeletedKey(const Key& k) const {
-    // return KeysEqual(options_.DeletedKey(), k);
     return SfinaeIsDeletedKey(&k, &options_, &equal_to_);
   }
 

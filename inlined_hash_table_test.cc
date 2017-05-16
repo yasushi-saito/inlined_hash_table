@@ -80,10 +80,10 @@ typedef ::testing::Types<InlinedHash, HopScotchHash> MyTypes;
 TYPED_TEST_CASE(MapTest, MyTypes);
 
 TEST(InlinedHashMapTest, Size) {
-  InlinedHashMap<int, int, 0, MapOptions<int>, std::hash<int>, std::equal_to<int>,
-                 int>
+  InlinedHashMap<int, int, 0, MapOptions<int>, std::hash<int>,
+                 std::equal_to<int>, int>
       m;
-  ASSERT_EQ(sizeof(m), 3);
+  ASSERT_EQ(sizeof(m), 24);
 }
 
 TYPED_TEST(MapTest, Simple) {

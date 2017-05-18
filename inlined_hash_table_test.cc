@@ -80,10 +80,26 @@ typedef ::testing::Types<InlinedHash, HopScotchHash> MyTypes;
 TYPED_TEST_CASE(MapTest, MyTypes);
 
 TEST(InlinedHashMapTest, Size) {
+  // Caption: this test passes only on a 64bit machine.
   InlinedHashMap<int, int, 0, MapOptions<int>, std::hash<int>,
                  std::equal_to<int>, int>
       m;
   ASSERT_EQ(sizeof(m), 24);
+}
+
+TEST(InlinedHashSetTest, Basic) {
+  InlinedHashSet<int, 0, MapOptions<int>, std::hash<int>,
+                 std::equal_to<int>, int> m;
+  m.insert(1);
+  EXPECT_TRUE(m.find(1) != m.end());
+  EXPECT_TRUE(m.find(2) == m.end());
+  m.clear();
+  EXPECT_TRUE(m.find(1) == m.end());
+
+  m.insert(2);
+  EXPECT_TRUE(m.find(2) != m.end());
+  m.erase(2);
+  EXPECT_TRUE(m.find(2) == m.end());
 }
 
 TYPED_TEST(MapTest, Simple) {

@@ -40,13 +40,11 @@ class InlinedHashTable {
                 "NumInlinedElements must be a power of two");
   InlinedHashTable(IndexType bucket_count, const Options& options,
                    const Hash& hash, const EqualTo& equal_to)
-      : size_(0),
-        capacity_mask_(ComputeCapacity(bucket_count) - 1),
-        options_(options),
-        hash_(hash),
-        equal_to_(equal_to) {
-    num_empty_slots_and_inlined_.t0() = capacity_mask_ + 1;
+      : size_(0), options_(options), hash_(hash), equal_to_(equal_to) {
+    IndexType capacity = ComputeCapacity(bucket_count);
+    capacity_mask_ = capacity - 1;
     assert((capacity & capacity_mask_) == 0);
+    num_free_slots_and_inlined_.t0() = capacity * MaxLoadFactor();
     for (Elem& elem : inlined()) {
       *GetKey::Mutable(&elem) = options_.EmptyKey();
     }
@@ -67,7 +65,7 @@ class InlinedHashTable {
     capacity_mask_ = other.capacity_mask_;
     options_ = other.options_;
     hash_ = other.hash_;
-    num_empty_slots_and_inlined_ = other.num_empty_slots_and_inlined_;
+    num_free_slots_and_inlined_ = other.num_free_slots_and_inlined_;
     if (other.outlined_ != nullptr) {
       const size_t n = other.Capacity() - inlined().size();
       outlined_.reset(new Elem[n]);
@@ -81,8 +79,7 @@ class InlinedHashTable {
     capacity_mask_ = other.capacity_mask_;
     options_ = std::move(other.options_);
     hash_ = std::move(other.hash_);
-    num_empty_slots_and_inlined_ =
-        std::move(other.num_empty_slots_and_inlined_);
+    num_free_slots_and_inlined_ = std::move(other.num_free_slots_and_inlined_);
     outlined_ = std::move(other.outlined_);
 
     other.outlined_.reset();
@@ -91,6 +88,7 @@ class InlinedHashTable {
     return *this;
   }
 
+  // Move the contents of "other" over to this table.
   void MoveFrom(InlinedHashTable&& other) {
     assert(size_ == 0);
     for (Elem& e : other) {
@@ -101,7 +99,7 @@ class InlinedHashTable {
         abort();
       }
       *MutableElem(index) = std::move(e);
-      --num_empty_slots();
+      --num_free_slots();
     }
     size_ = other.size_;
   }
@@ -187,7 +185,7 @@ class InlinedHashTable {
   const_iterator begin() const { return cbegin(); }
   const_iterator end() const { return cend(); }
 
-  iterator find(const Key& k) {
+  iterator Find(const Key& k) {
     IndexType index;
     if (FindInArray(k, hash_(k), &index)) {
       return iterator(this, index);
@@ -196,7 +194,7 @@ class InlinedHashTable {
     }
   }
 
-  const_iterator find(const Key& k) const {
+  const_iterator Find(const Key& k) const {
     IndexType index;
     if (FindInArray(k, hash_(k), &index)) {
       return const_iterator(this, index);
@@ -216,7 +214,7 @@ class InlinedHashTable {
 
   // If "k" exists in the table, erase it and return 1. Else return 0.
   IndexType Erase(const Key& k) {
-    iterator i = find(k);
+    iterator i = Find(k);
     if (i == end()) return 0;
     Erase(i);
     return 1;
@@ -258,7 +256,7 @@ class InlinedHashTable {
       if (retries > Capacity()) {
         return false;
       }
-      *index = QuadraticProbe(*index, retries);
+      *index = Probe(*index, retries);
     }
   }
 
@@ -283,8 +281,8 @@ class InlinedHashTable {
           ++size_;
           return EMPTY_SLOT_FOUND;
         }
-        if (num_empty_slots() >= Capacity() * (1 - MaxLoadFactor())) {
-          --num_empty_slots();
+        if (num_free_slots() > 0) {
+          --num_free_slots();
           ++size_;
           return EMPTY_SLOT_FOUND;
         }
@@ -296,7 +294,7 @@ class InlinedHashTable {
       if (retries > Capacity()) {
         return ARRAY_FULL;
       }
-      *index = QuadraticProbe(*index, retries);
+      *index = Probe(*index, retries);
     }
   }
 
@@ -310,7 +308,7 @@ class InlinedHashTable {
       }
     }
     size_ = 0;
-    num_empty_slots() = 0;
+    num_free_slots() = Capacity();
   }
 
   const Options& options() const { return options_; }
@@ -333,7 +331,8 @@ class InlinedHashTable {
  private:
   static constexpr IndexType kEnd = std::numeric_limits<IndexType>::max();
 
-  IndexType QuadraticProbe(IndexType current, int retries) const {
+  // Compute the next bucket index to probe on collision.
+  IndexType Probe(IndexType current, int retries) const {
     return Clamp((current + retries));
   }
 
@@ -416,7 +415,7 @@ class InlinedHashTable {
   // First NumInlinedElements are stored in inlined. The rest are stored in
   // outlined.
   CompressedPairImpl<IndexType, InlinedArray, NumInlinedElements == 0>
-      num_empty_slots_and_inlined_;
+      num_free_slots_and_inlined_;
 
   Options options_;
   Hash hash_;
@@ -424,16 +423,14 @@ class InlinedHashTable {
   std::unique_ptr<Elem[]> outlined_;
 
   const InlinedArray& inlined() const {
-    return num_empty_slots_and_inlined_.t1();
+    return num_free_slots_and_inlined_.t1();
   }
-  InlinedArray& inlined() { return num_empty_slots_and_inlined_.t1(); }
+  InlinedArray& inlined() { return num_free_slots_and_inlined_.t1(); }
 
   // Number of empty slots, i.e., capacity - (# of filled slots + # of
   // tombstones).
-  IndexType num_empty_slots() const {
-    return num_empty_slots_and_inlined_.t0();
-  }
-  IndexType& num_empty_slots() { return num_empty_slots_and_inlined_.t0(); }
+  IndexType num_free_slots() const { return num_free_slots_and_inlined_.t0(); }
+  IndexType& num_free_slots() { return num_free_slots_and_inlined_.t0(); }
 };
 
 template <typename Key, typename Value, int NumInlinedElements,
@@ -465,8 +462,8 @@ class InlinedHashMap {
   const_iterator begin() const { return impl_.cbegin(); }
   const_iterator end() const { return impl_.cend(); }
   IndexType size() const { return impl_.Size(); }
-  iterator find(const Key& k) { return impl_.find(k); }
-  const_iterator find(const Key& k) const { return impl_.find(k); }
+  iterator find(const Key& k) { return impl_.Find(k); }
+  const_iterator find(const Key& k) const { return impl_.Find(k); }
 
   std::pair<iterator, bool> insert(Elem&& value) {
     IndexType index;
@@ -528,8 +525,8 @@ template <typename Elem, int NumInlinedElements, typename Options,
 class InlinedHashSet {
  public:
   struct GetKey {
-    const Elem& Get(const Elem& elem) const { return elem; }
-    Elem* Mutable(Elem* elem) const { return elem; }
+    static const Elem& Get(const Elem& elem) { return elem; }
+    static Elem* Mutable(Elem* elem) { return elem; }
   };
   using Table = InlinedHashTable<Elem, Elem, NumInlinedElements, Options,
                                  GetKey, Hash, EqualTo, IndexType>;
@@ -547,19 +544,24 @@ class InlinedHashSet {
   const_iterator cend() const { return impl_.cend(); }
   const_iterator begin() const { return impl_.cbegin(); }
   const_iterator end() const { return impl_.cend(); }
-  IndexType size() const { return impl_.size(); }
+  IndexType size() const { return impl_.Size(); }
   std::pair<iterator, bool> insert(Elem&& value) {
-    return impl_.insert(std::move(value));
-  }
-  std::pair<iterator, bool> insert(const Elem& value) {
-    return impl_.insert(value);
+    IndexType index;
+    typename Table::InsertResult result = Insert(value, &index);
+    Elem* slot = impl_.MutableElem(index);
+    if (result != Table::KEY_FOUND) {
+      // newly inserted. fill the key.
+      *slot = std::move(value);
+      return std::make_pair(typename Table::iterator(&impl_, index), true);
+    }
+    return std::make_pair(typename Table::iterator(&impl_, index), false);
   }
 
-  iterator find(const Elem& k) { return impl_.find(k); }
-  const_iterator find(const Elem& k) const { return impl_.find(k); }
-  void clear() { impl_.clear(); }
-  iterator erase(iterator i) { return impl_.erase(i); }
-  IndexType erase(const Elem& k) { return impl_.erase(k); }
+  iterator find(const Elem& k) { return impl_.Find(k); }
+  const_iterator find(const Elem& k) const { return impl_.Find(k); }
+  void clear() { impl_.Clear(); }
+  iterator erase(iterator i) { return impl_.Erase(i); }
+  IndexType erase(const Elem& k) { return impl_.Erase(k); }
 
   // Non-standard methods, mainly for testing.
   size_t capacity() const { return impl_.capacity(); }
@@ -568,10 +570,9 @@ class InlinedHashSet {
   // Rehash the hash table. "delta" is the number of elements to add to the
   // current table. It's used to compute the capacity of the new table.  Culls
   // tombstones and move all the existing elements and
-  typename Table::InsertResult Insert(const Elem& elem,
-                                      typename Table::IndexType* index) {
+  typename Table::InsertResult Insert(const Elem& elem, IndexType* index) {
     const size_t hash = impl_.hash()(elem);
-    typename Table::InsertResult result = impl_.InsertInArray(elem, index);
+    typename Table::InsertResult result = impl_.Insert(elem, hash, index);
     if (result == Table::KEY_FOUND) return result;
     if (result != Table::ARRAY_FULL) {
       return result;
@@ -580,9 +581,9 @@ class InlinedHashSet {
     const IndexType new_capacity = impl_.ComputeCapacity(size() + 1);
     Table new_impl(new_capacity, impl_.options(), impl_.hash(),
                    impl_.equal_to());
-    new_impl.MoveFrom(impl_);
+    new_impl.MoveFrom(std::move(impl_));
     impl_ = std::move(new_impl);
-    result = impl_.InsertInArray(elem, index);
+    result = impl_.Insert(elem, hash, index);
     assert(result == EMPTY_SLOT_FOUND);
     return result;
   }

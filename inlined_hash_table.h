@@ -11,7 +11,7 @@
 #include <type_traits>
 
 // InlinedHashTable is an implementation detail that underlies InlinedHashMap
-// and InlinedHashSet. It's not for public use.
+// and InlinedHashSet. Not for public use.
 //
 // NumInlinedElements is the number of elements stored in-line with the table.
 //
@@ -24,14 +24,23 @@
 //
 // EmptyKey() should return a key that represents an unused key.  DeletedKey()
 // should return a tombstone key. DeletedKey() needs to be defined iff you use
-// erase(). MaxLoadFactor() defines when the hash table is expanded. The default
-// value is 0.75, meaning that if the number of non-empty slots in the table
-// exceeds 75% of the capacity, the hash table is doubled. The valid range of
-// MaxLoadFactor() is (0,1].
-//
+// erase(). These keys must be different from any key that may be passed in
+// insert or lookup.
 // Caution: each method must return the same value across multiple invocations.
 // Returning a compile-time constant allows the compiler to optimize the code
 // well.
+//
+// MaxLoadFactor() defines when the hash table is expanded. The default value is
+// 0.5, meaning that if the number of non-empty slots in the table exceeds 50%
+// of the capacity, the hash table is doubled. The valid range of
+// MaxLoadFactor() is (0,1].
+//
+// Parameters Hash and EqualTo are the functors used by
+// std::unordered_{map,set}.
+//
+// IndexType is used to index the bucket array. The default is size_t, but if
+// you can guarantee the table size doesn't exceed 2³² you can use uint32_t to
+// save memory.
 template <typename Key, typename Elem, int NumInlinedElements, typename Options,
           typename GetKey, typename Hash, typename EqualTo, typename IndexType>
 class InlinedHashTable {

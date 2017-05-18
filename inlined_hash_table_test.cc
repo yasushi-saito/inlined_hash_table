@@ -38,8 +38,8 @@ class MapOptions<std::string> {
 template <>
 class MapOptions<int> {
  public:
-  int EmptyKey() const { return -1; };
-  int DeletedKey() const { return -2; }
+  constexpr int EmptyKey() const { return -1; };
+  constexpr int DeletedKey() const { return -2; }
 };
 
 using InlinedHash =

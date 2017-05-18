@@ -41,7 +41,7 @@ class InlinedHashTable {
   InlinedHashTable(IndexType bucket_count, const Options& options,
                    const Hash& hash, const EqualTo& equal_to)
       : size_(0), options_(options), hash_(hash), equal_to_(equal_to) {
-    IndexType capacity = ComputeCapacity(bucket_count);
+    const IndexType capacity = ComputeCapacity(bucket_count);
     capacity_mask_ = capacity - 1;
     assert((capacity & capacity_mask_) == 0);
     num_free_slots_and_inlined_.t0() = capacity * MaxLoadFactor();
@@ -85,10 +85,13 @@ class InlinedHashTable {
     other.outlined_.reset();
     other.size_ = 0;
     other.capacity_mask_ = other.inlined().size() - 1;
+    other.num_free_slots() = other.Capacity() * MaxLoadFactor();
     return *this;
   }
 
-  // Move the contents of "other" over to this table.
+  // Move the contents of "other" over to this table.  "other" will be in an
+  // unspecified state after the call, and the only safe operation is to destroy
+  // it.
   void MoveFrom(InlinedHashTable&& other) {
     assert(size_ == 0);
     for (Elem& e : other) {
@@ -329,6 +332,7 @@ class InlinedHashTable {
   }
 
  private:
+  using InlinedArray = std::array<Elem, NumInlinedElements>;
   static constexpr IndexType kEnd = std::numeric_limits<IndexType>::max();
 
   // Compute the next bucket index to probe on collision.
@@ -390,30 +394,30 @@ class InlinedHashTable {
 
   static auto SfinaeIsDeletedKey(...) -> bool { return false; }
 
+  // A template hack to call Options::MaxLoadFactor only when it's defined.
   template <typename TOptions>
   static auto SfinaeMaxLoadFactor(const TOptions* options)
       -> decltype(options->MaxLoadFactor()) {
     return options->MaxLoadFactor();
   }
-
   static auto SfinaeMaxLoadFactor(...) -> double { return 0.5; }
-
   bool IsDeletedKey(const Key& k) const {
     return SfinaeIsDeletedKey(&k, &options_, &equal_to_);
   }
-
+  // Returns the value of Options::MaxLoadFactor(), or 0.5 if it's not defined.
   double MaxLoadFactor() const { return SfinaeMaxLoadFactor(&options_); }
 
+  // Clamp the "v" in the array bucket  index range.
   IndexType Clamp(IndexType v) const { return v & capacity_mask_; }
-
-  using InlinedArray = std::array<Elem, NumInlinedElements>;
 
   // # of filled slots.
   IndexType size_;
   // Capacity-1 of inlined + capacity of outlined. Always a power of two.
   IndexType capacity_mask_;
-  // First NumInlinedElements are stored in inlined. The rest are stored in
-  // outlined.
+
+  // Combo of num_free_slots and inlined. num_free_slots is the # of remaining
+  // free (empty) slots that can be claimed by insert(). inlined_ is the list of
+  // elements stored in line with this table.
   CompressedPairImpl<IndexType, InlinedArray, NumInlinedElements == 0>
       num_free_slots_and_inlined_;
 
@@ -427,8 +431,9 @@ class InlinedHashTable {
   }
   InlinedArray& inlined() { return num_free_slots_and_inlined_.t1(); }
 
-  // Number of empty slots, i.e., capacity - (# of filled slots + # of
-  // tombstones).
+  // Number of free slots that can be claimed by insert(). It's initialize to
+  // capacity * MaxLoadFactor, and is decremented every time a slot is taken by
+  // insert().
   IndexType num_free_slots() const { return num_free_slots_and_inlined_.t0(); }
   IndexType& num_free_slots() { return num_free_slots_and_inlined_.t0(); }
 };

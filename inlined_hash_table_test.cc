@@ -498,9 +498,9 @@ int main(int argc, char** argv) {
   for (int i = 1; i < argc; ++i) {
     if (strncmp(argv[i], "--cpu_profile=", strlen("--cpu_profile=")) == 0) {
       const char* cpu_profile = argv[i] + 14;
-      std::cerr << "Recording CPU profile in " << cpu_profile << "\n";
-      ProfilerStart(cpu_profile);
-      atexit(ProfilerStop);
+      //std::cerr << "Recording CPU profile in " << cpu_profile << "\n";
+      //ProfilerStart(cpu_profile);
+      //atexit(ProfilerStop);
     }
     if (strncmp(argv[i], "--benchmark", 11) == 0) {
       run_benchmark = true;

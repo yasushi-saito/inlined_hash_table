@@ -82,7 +82,7 @@ class HopScotchHashTableBucketMetadata {
 };
 
 template <typename T>
-class __attribute((aligned(sizeof(T)))) HopScotchHashTableManualConstructor {
+class HopScotchHashTableManualConstructor {
  public:
   HopScotchHashTableManualConstructor() {}
 

@@ -134,13 +134,13 @@ class InlinedHashTable {
     Elem* operator->() const { return table_->MutableElem(index_); }
 
     iterator operator++() {  // ++it
-      index_ = table_->NextValidElementInArray(index_ + 1);
+      index_ = table_->NextValidElement(index_ + 1);
       return *this;
     }
 
     iterator operator++(int unused) {  // it++
       iterator r(*this);
-      index_ = table_->NextValidElementInArray(index_ + 1);
+      index_ = table_->NextValidElement(index_ + 1);
       return r;
     }
 
@@ -172,13 +172,13 @@ class InlinedHashTable {
     const Elem* operator->() const { return &table_->GetElem(index_); }
 
     const_iterator operator++() {  // ++it
-      index_ = table_->NextValidElementInArray(table_->array_, index_ + 1);
+      index_ = table_->NextValidElement(table_->array_, index_ + 1);
       return *this;
     }
 
     const_iterator operator++(int unused) {  // it++
       const_iterator r(*this);
-      index_ = table_->NextValidElementInArray(index_ + 1);
+      index_ = table_->NextValidElement(index_ + 1);
       return r;
     }
 
@@ -188,10 +188,10 @@ class InlinedHashTable {
     IndexType index_;
   };
 
-  iterator begin() { return iterator(this, NextValidElementInArray(0)); }
+  iterator begin() { return iterator(this, NextValidElement(0)); }
   iterator end() { return iterator(this, kEnd); }
   const_iterator cbegin() const {
-    return const_iterator(this, NextValidElementInArray(0));
+    return const_iterator(this, NextValidElement(0));
   }
   const_iterator cend() const { return const_iterator(this, kEnd); }
   const_iterator begin() const { return cbegin(); }
@@ -221,7 +221,7 @@ class InlinedHashTable {
     Elem& elem = *i;
     *GetKey::Mutable(&elem) = options_.DeletedKey();
     --size_;
-    return iterator(this, NextValidElementInArray(i.index_ + 1));
+    return iterator(this, NextValidElement(i.index_ + 1));
   }
 
   // If "k" exists in the table, erase it and return 1. Else return 0.
@@ -351,7 +351,7 @@ class InlinedHashTable {
 
   // Find the first filled slot at or after "from". For incremenenting an
   // iterator.
-  IndexType NextValidElementInArray(IndexType from) const {
+  IndexType NextValidElement(IndexType from) const {
     IndexType i = from;
     for (;;) {
       if (i >= Capacity()) {
@@ -509,16 +509,10 @@ class InlinedHashMap {
   size_t capacity() const { return impl_.Capacity(); }
 
  private:
-  // Rehash the hash table. "delta" is the number of elements to add to the
-  // current table. It's used to compute the capacity of the new table.  Culls
-  // tombstones and move all the existing elements and
   typename Table::InsertResult Insert(const Key& key, IndexType* index) {
     const size_t hash = impl_.hash()(key);
     typename Table::InsertResult result = impl_.Insert(key, hash, index);
-    if (result == Table::KEY_FOUND) return result;
-    if (result != Table::ARRAY_FULL) {
-      return result;
-    }
+    if (result != Table::ARRAY_FULL) return result;
 
     const IndexType new_capacity = impl_.ComputeCapacity(size() + 1);
     Table new_impl(new_capacity, impl_.options(), impl_.hash(),
@@ -581,16 +575,10 @@ class InlinedHashSet {
   size_t capacity() const { return impl_.capacity(); }
 
  private:
-  // Rehash the hash table. "delta" is the number of elements to add to the
-  // current table. It's used to compute the capacity of the new table.  Culls
-  // tombstones and move all the existing elements and
   typename Table::InsertResult Insert(const Elem& elem, IndexType* index) {
     const size_t hash = impl_.hash()(elem);
     typename Table::InsertResult result = impl_.Insert(elem, hash, index);
-    if (result == Table::KEY_FOUND) return result;
-    if (result != Table::ARRAY_FULL) {
-      return result;
-    }
+    if (result != Table::ARRAY_FULL) return result;
 
     const IndexType new_capacity = impl_.ComputeCapacity(size() + 1);
     Table new_impl(new_capacity, impl_.options(), impl_.hash(),

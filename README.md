@@ -65,12 +65,15 @@ It's the same as dense\_hash\_map's, and is weaker than std::unordered\_map's:
 
 ## Performance
 
-Lookup and insert are both about 2x faster than clang4+libc++ in small
-benchmarks, where all the data fits in L2.
+Lookup and insert are faster than std::unordered_map, and in par with
+dense\_hash\_map. inlined\_hash\_map has much smaller memory footprint for small
+tables. An empty dense\_hash\_map takes 88 bytes, whereas inlined\_hash\_map
+takes 24 bytes, so if you create lots of small maps, the latter will start
+performing better.
 
 The following tests are done on clang++(4.0) on a Haswell-grade CPU. We used
-tcmalloc for memory allocation.
-The numbers after "/" are the number of elements inserted or looked up.
+tcmalloc for memory allocation.  The numbers after "/" are the number of
+elements inserted or looked up.
 
 <pre>
 BM_Insert_HopScotchMap_Int/4                   943 ns        943 ns     604541

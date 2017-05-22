@@ -107,7 +107,7 @@ class InlinedHashTable {
       IndexType index;
       const Key& key = GetKey::Get(e);
       if (IsEmptyKey(key) || IsDeletedKey(key)) continue;
-      if (FindInArray(key, hash_(key), &index)) {
+      if (Find(key, hash_(key), &index)) {
         abort();
       }
       *MutableElem(index) = std::move(e);
@@ -197,18 +197,18 @@ class InlinedHashTable {
   const_iterator begin() const { return cbegin(); }
   const_iterator end() const { return cend(); }
 
-  iterator Find(const Key& k) {
+  iterator find(const Key& k) {
     IndexType index;
-    if (FindInArray(k, hash_(k), &index)) {
+    if (Find(k, hash_(k), &index)) {
       return iterator(this, index);
     } else {
       return end();
     }
   }
 
-  const_iterator Find(const Key& k) const {
+  const_iterator find(const Key& k) const {
     IndexType index;
-    if (FindInArray(k, hash_(k), &index)) {
+    if (Find(k, hash_(k), &index)) {
       return const_iterator(this, index);
     } else {
       return cend();
@@ -226,7 +226,7 @@ class InlinedHashTable {
 
   // If "k" exists in the table, erase it and return 1. Else return 0.
   IndexType Erase(const Key& k) {
-    iterator i = Find(k);
+    iterator i = find(k);
     if (i == end()) return 0;
     Erase(i);
     return 1;
@@ -254,7 +254,7 @@ class InlinedHashTable {
 
   // Find "k" in the array. If found, set *index to the location of the key in
   // the array.
-  bool FindInArray(const Key& k, size_t hash, IndexType* index) const {
+  bool Find(const Key& k, size_t hash, IndexType* index) const {
     if (Capacity() == 0) return false;
     *index = Clamp(hash);
     for (int retries = 1;; ++retries) {
@@ -476,8 +476,8 @@ class InlinedHashMap {
   const_iterator begin() const { return impl_.cbegin(); }
   const_iterator end() const { return impl_.cend(); }
   IndexType size() const { return impl_.Size(); }
-  iterator find(const Key& k) { return impl_.Find(k); }
-  const_iterator find(const Key& k) const { return impl_.Find(k); }
+  iterator find(const Key& k) { return impl_.find(k); }
+  const_iterator find(const Key& k) const { return impl_.find(k); }
 
   std::pair<iterator, bool> insert(Elem&& value) {
     IndexType index;
@@ -565,7 +565,7 @@ class InlinedHashSet {
     return std::make_pair(typename Table::iterator(&impl_, index), false);
   }
 
-  iterator find(const Elem& k) { return impl_.Find(k); }
+  iterator find(const Elem& k) { return impl_.find(k); }
   const_iterator find(const Elem& k) const { return impl_.Find(k); }
   void clear() { impl_.Clear(); }
   iterator erase(iterator i) { return impl_.Erase(i); }

@@ -1,9 +1,25 @@
-# inlined_hash_table
+# InlinedHashTable and HopScotchHashTable
 
-Fast open-addressed C++ hash table.  It is very similar to
+InlinedHashTable is a fast open-addressed C++ hash table.  It is very similar to
 google's
 [dense hash map](http://goog-sparsehash.sourceforge.net/doc/dense_hash_map.html),
-but it's takes less memory.
+but it's takes less memory. HopScotchHashTable is an implementation of the
+following paper.  It is _not_ thread safe; it's merely thread compatible.
+
+[Hopscotch hashing](https://pdfs.semanticscholar.org/48c2/af3d559fb2c7ef5e71efd24ab5ae217c1fee.pdf),
+Maurice Herlihy, Nir Shavit, Moran Tzafrir.
+
+`InlinedHashTable` is small, simple and fast, especially when keys and values
+are small (think integers and floating points). The downside is that it needs
+two special keys, _empty key_ and _deleted keys_ to represent empty slots and
+tombstones. Besides a just bit cumbersome to configure, these two cannot be used
+as regular keys.
+
+`HopScotchHashTable` is a bit slower than `InlinedHashTable` but faster than
+`std::unordered_map`. It doesn't require empty nor deleted keys. One of the
+advantages of this algorithm is that it uses linear probing to handle
+collisions, but yet it can handle very high load factor. So it should perform
+better on a very large data set.
 
 ## Prerequisites
 
@@ -23,7 +39,9 @@ it to where you want.
 
 The cmakefiles are for unittests, and you can ignore them.
 
-## Usage
+### Using InlinedHashTable
+
+See the header file for more details.
 
 ```
 class Options {
@@ -48,20 +66,26 @@ void Test() {
 The above example creates an integer→integer hash map. It uses -1 as an empty
 key, and -2 as the deleted key (tombstones).  After erasing an existing element,
 the bucket is set to -2. You cannot use -1 or -2 as a valid key. `DeletedKey()`
-is needed only when `InlineHashTable::erase()` is going to be used.
+is needed only when `InlinedHashTable::erase()` is going to be used.
 
 The third parameter, `8`, defines the number of elements stored in-line with the
 hash map. That is, up to 8 elements can be stored in the hash table without
 `new`. It is allowed to set this parameter to 0.
 
-## Iterator invalidation semantics
+### Iterator invalidation semantics for InlinedHashTable
 
 It's the same as dense\_hash\_map's, and is weaker than std::unordered\_map's:
 
 - Insertion invalidates outstanding iterators.
 
-- Erasure keeps iterators valid, except those refering to the element being
+- Erasure keeps iterators valid, except those referring to the element being
   erased.
+
+## Using HopScotchHashTable
+
+See the header file for more details. The template parameters are the same as
+`std::unordered_map`s. Iterator invalidation semantics is the same as
+InlinedHashTable.
 
 ## Performance
 

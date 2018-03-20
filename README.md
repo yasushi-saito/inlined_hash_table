@@ -30,7 +30,13 @@ To run the test and benchmark, you need to install google sparsehash. For ubuntu
 
 Follow the following descriptions to install gtest:
 
-       https://www.eriksmistad.no/getting-started-with-google-test-on-ubuntu/
+    https://www.eriksmistad.no/getting-started-with-google-test-on-ubuntu/
+
+To build the test:
+
+    cmake .
+    make -j8
+
 
 ## Installation
 

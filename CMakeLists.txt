@@ -3,7 +3,7 @@ project(InlinedHashTable)
 find_package(GTest REQUIRED)
 include_directories(${GTEST_INCLUDE_DIRS})
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g -std=c++1z -march=native")
-set(CMAKE_CXX_COMPILER "/opt/clang+llvm-4.0.0-x86_64-linux-gnu-ubuntu-16.04/bin/clang++")
+set(CMAKE_CXX_COMPILER "/opt/clang+llvm-5.0.1-x86_64-linux-gnu-ubuntu-16.04/bin/clang++")
 include(ExternalProject)
 
 ExternalProject_Add (
